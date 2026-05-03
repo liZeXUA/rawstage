@@ -2,7 +2,6 @@
 
 ComicDirector ML v1.0 rendering engine. Parses XML performance instructions and outputs MP4 video by compositing PNG character sprites and backgrounds.
 
-Target: Linux (Python 3.11+, Pillow, lxml, ffmpeg).
 
 ## Install
 
