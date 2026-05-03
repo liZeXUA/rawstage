@@ -300,9 +300,6 @@ def _encode_result(
     preset: str,
 ) -> None:
     """Collect audio and call encoder."""
-    # Collect audio events with global timing
-    audio_inputs = _collect_audio(script, assets_root)
-
     items = script.blocks
     segments = _build_timeline(items)[1]
     total_frames = math.ceil(
@@ -310,6 +307,8 @@ def _encode_result(
 
     if not segments:
         return
+
+    audio_inputs = _compute_audio_inputs(script, assets_root, items, segments)
 
     encode_video(
         frame_dir=temp_dir,
@@ -321,112 +320,34 @@ def _encode_result(
     )
 
 
-def _collect_audio(
-    script: Script,
-    assets_root: Path,
-) -> list[tuple[Path, float, float, bool, float]]:
-    """Collect audio events with their global start times.
-
-    Returns list of (file_path, global_start_sec, duration_sec, loop, volume).
-    """
-    items = script.blocks
-    scenes: list[Scene] = []
-    for item in items:
-        if isinstance(item, Scene):
-            scenes.append(item)
-        elif isinstance(item, Transition):
-            continue
-
-    # Build global start times for each scene
-    _, segments = _build_timeline(items)
-    scene_global_starts: dict[str, float] = {}
-    for seg in segments:
-        if seg["type"] == "scene":
-            scene = scenes[seg["scene_index"]]
-            if scene.id not in scene_global_starts:
-                scene_global_starts[scene.id] = seg["global_start"] - seg["scene_start"]
-            # scene_start = global_start - scene_t_at_seg_start
-            # Actually simpler: seg["global_start"] - seg["scene_start"] gives the
-            # offset that converts scene-relative time to global time for this segment.
-            # But the scene's own t=0 might start earlier. Let me think again.
-            #
-            # seg["global_start"] = global time when this scene segment starts
-            # seg["scene_start"] = scene-relative global timeline time that this segment
-            #   maps to scene time 0? No.
-            #
-            # Let me recompute. When segment starts at global time G, and the
-            # scene time at that point is St, then: G = scene_global_start + St
-            # So scene_global_start = G - St
-            scene_global_starts[scene.id] = seg["global_start"] - 0.0
-            # For a scene-only segment (no transition before it), St=0 at segment start
-            # so scene_global_start = G
-
-            # For a scene segment that appears after a transition, the scene started
-            # during the transition, so its global start is earlier than G.
-            # Let me find the earliest global time for this scene.
-            break  # Only need first occurrence
-
-    # Actually, this is getting complicated. Let me recompute scene global starts
-    # from the timeline more carefully.
-    return _compute_audio_inputs(script, assets_root, items, segments)
-
-
 def _compute_audio_inputs(
     script: Script,
     assets_root: Path,
-    items: list,
+    items: list[Scene | Transition],
     segments: list[dict],
 ) -> list[tuple[Path, float, float, bool, float]]:
-    """Map audio events to global time and collect encoder inputs."""
-    # Find global start time for t=0 of each scene
-    scene_t0: dict[str, float] = {}
-    for seg in segments:
-        scene_idx = None
-        if seg["type"] == "scene":
-            scene_idx = seg["scene_index"]
-        elif seg["type"] == "transition":
-            continue  # handle differently
-
-        if scene_idx is not None:
-            scene = [it for it in items if isinstance(it, Scene)][scene_idx]
-            scene_t = 0.0
-            if seg["type"] == "scene":
-                # Scene segment starts at scene time (global_start - scene_start)
-                scene_t_at_start = seg["global_start"] - seg["scene_start"]
-                # If this is the earliest segment for this scene, record t0
-                if scene.id not in scene_t0:
-                    scene_t0[scene.id] = seg["global_start"] - scene_t_at_start
-
-    # Recompute: for transition segments, scene B starts before its first
-    # scene-only segment
-    for seg in segments:
-        if seg["type"] == "transition":
-            scene_b_idx = seg["scene_b_index"]
-            scene_b = [it for it in items if isinstance(it, Scene)][scene_b_idx]
-            scene_b_t0 = seg["scene_b_start"]
-            if scene_b.id not in scene_t0 or scene_b_t0 < scene_t0[scene_b.id]:
-                scene_t0[scene_b.id] = scene_b_t0
-
-        elif seg["type"] == "scene":
-            scene_idx = seg["scene_index"]
-            scene = [it for it in items if isinstance(it, Scene)][scene_idx]
-            # Scene time at segment start: scene's local time when this segment begins
-            scene_local_t = 0.0
-            # If this scene was introduced in a transition, its t=0 is earlier
-            candidate_t0 = seg["global_start"] - scene_local_t
-            if scene.id not in scene_t0:
-                scene_t0[scene.id] = candidate_t0
-            else:
-                scene_t0[scene.id] = min(scene_t0[scene.id], candidate_t0)
-
-    # Now collect audio events
-    result: list[tuple[Path, float, float, bool, float]] = []
+    """Map scene audio events to global time for the encoder."""
     scenes_list = [it for it in items if isinstance(it, Scene)]
 
-    for scene in scenes_list:
-        if scene.id not in scene_t0:
+    # Compute the earliest global t=0 for each scene
+    scene_t0: dict[str, float] = {}
+    for seg in segments:
+        if seg["type"] == "scene":
+            scene = scenes_list[seg["scene_index"]]
+            t0 = seg["scene_start"]
+        elif seg["type"] == "transition":
+            scene = scenes_list[seg["scene_b_index"]]
+            t0 = seg["scene_b_start"]
+        else:
             continue
-        t0 = scene_t0[scene.id]
+        if scene.id not in scene_t0 or t0 < scene_t0[scene.id]:
+            scene_t0[scene.id] = t0
+
+    result: list[tuple[Path, float, float, bool, float]] = []
+    for scene in scenes_list:
+        t0 = scene_t0.get(scene.id)
+        if t0 is None:
+            continue
 
         for event in scene.events:
             if not isinstance(event, AudioEvent):
