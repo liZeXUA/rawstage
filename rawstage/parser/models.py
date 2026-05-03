@@ -1,0 +1,165 @@
+from dataclasses import dataclass, field
+
+
+# ---- Assets ----
+
+@dataclass(slots=True)
+class CharacterAsset:
+    id: str
+    name: str
+    src: str
+
+
+@dataclass(slots=True)
+class ExpressionAsset:
+    id: str
+    character: str
+    src: str
+
+
+@dataclass(slots=True)
+class BackgroundAsset:
+    id: str
+    src: str
+
+
+@dataclass(slots=True)
+class AudioAsset:
+    id: str
+    src: str
+
+
+@dataclass(slots=True)
+class Assets:
+    characters: dict[str, CharacterAsset] = field(default_factory=dict)
+    expressions: dict[str, ExpressionAsset] = field(default_factory=dict)
+    backgrounds: dict[str, BackgroundAsset] = field(default_factory=dict)
+    audios: dict[str, AudioAsset] = field(default_factory=dict)
+
+
+# ---- Scene setup ----
+
+@dataclass(slots=True)
+class InitialCamera:
+    center_x: float = 960.0
+    center_y: float = 540.0
+    scale: float = 1.0
+
+
+@dataclass(slots=True)
+class Place:
+    character: str
+    x: float
+    y: float
+
+
+# ---- Event types ----
+
+@dataclass(slots=True)
+class TimelineEvent:
+    start: float
+    duration: float
+
+
+@dataclass(slots=True)
+class EnterEvent(TimelineEvent):
+    character: str
+    method: str  # fade_in, slide_left, slide_right, slide_up, slide_down, pop_in
+    target_x: float | None = None
+    target_y: float | None = None
+
+
+@dataclass(slots=True)
+class ExitEvent(TimelineEvent):
+    character: str
+    method: str  # slide_left, slide_right, slide_up, slide_down, fade_out
+
+
+@dataclass(slots=True)
+class MoveEvent(TimelineEvent):
+    character: str
+    to_x: float | None = None
+    to_y: float | None = None
+    path: list[tuple[float, float]] | None = None
+    easing: str = "linear"
+
+
+@dataclass(slots=True)
+class CameraEvent(TimelineEvent):
+    target: str | None = None
+    center_x: float | None = None
+    center_y: float | None = None
+    scale: float | None = None
+    easing: str = "linear"
+
+
+@dataclass(slots=True)
+class DialogueEvent(TimelineEvent):
+    character: str
+    text: str
+
+
+@dataclass(slots=True)
+class ExpressionEvent(TimelineEvent):
+    character: str
+    set: str  # expression asset id
+
+
+@dataclass(slots=True)
+class AudioEvent(TimelineEvent):
+    ref: str
+    action: str  # play, play_once
+    loop: bool = False
+    volume: float = 1.0
+
+
+# ---- Top-level containers ----
+
+@dataclass(slots=True)
+class Scene:
+    id: str
+    background: str
+    duration: float
+    initial_camera: InitialCamera
+    initial_characters: list[Place]
+    events: list[TimelineEvent]
+
+
+@dataclass(slots=True)
+class Transition:
+    type: str  # fade, wipe_left, wipe_right, dissolve
+    duration: float
+
+
+@dataclass
+class Script:
+    meta: dict[str, str]
+    assets: Assets
+    blocks: list[Scene | Transition]
+
+
+# ---- Runtime state (engine internal) ----
+
+@dataclass(slots=True)
+class CameraState:
+    center_x: float = 960.0
+    center_y: float = 540.0
+    scale: float = 1.0
+
+
+@dataclass(slots=True)
+class CharacterState:
+    character_id: str
+    visible: bool = False
+    x: float = 0.0
+    y: float = 0.0
+    opacity: float = 1.0
+    scale: float = 1.0
+    sprite_key: str = ""
+
+
+@dataclass(slots=True)
+class FrameState:
+    camera: CameraState = field(default_factory=CameraState)
+    characters: dict[str, CharacterState] = field(default_factory=dict)
+    subtitle_text: str | None = None

@@ -1,0 +1,126 @@
+from pathlib import Path
+from rawstage.parser import parse_script
+from rawstage.engine.timeline import evaluate_timeline
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_timeline_initial_state():
+    script = parse_script(FIXTURES / "sample.xml")
+    scene = script.blocks[0]
+
+    # t=0: only Alice visible at initial position
+    state = evaluate_timeline(scene, script.assets, 0.0)
+    assert "alice" in state.characters
+    assert state.characters["alice"].visible
+    assert state.characters["alice"].x == 400
+    assert state.characters["alice"].y == 800
+    # Bob not yet entered
+    assert "bob" not in state.characters or not state.characters["bob"].visible
+    assert state.camera.center_x == 960
+    assert state.camera.scale == 1.0
+
+
+def test_timeline_bob_entered():
+    script = parse_script(FIXTURES / "sample.xml")
+    scene = script.blocks[0]
+
+    # t=2.0: Bob enter completed (0.5 + 0.8 = 1.3 < 2.0)
+    state = evaluate_timeline(scene, script.assets, 2.0)
+    assert "bob" in state.characters
+    assert state.characters["bob"].visible
+    assert state.characters["bob"].x == 1100
+    assert state.characters["bob"].y == 800
+
+
+def test_timeline_bob_moved():
+    script = parse_script(FIXTURES / "sample.xml")
+    scene = script.blocks[0]
+
+    # t=5.0: move completed (2.0 + 2.0 = 4.0 < 5.0), Bob at target
+    state = evaluate_timeline(scene, script.assets, 5.0)
+    assert state.characters["bob"].x == 700
+    assert state.characters["bob"].y == 800
+
+
+def test_timeline_camera_tracks_bob():
+    script = parse_script(FIXTURES / "sample.xml")
+    scene = script.blocks[0]
+
+    # t=5.0: camera event settled, centered on Bob at (700, 800)
+    state = evaluate_timeline(scene, script.assets, 5.0)
+    assert state.camera.center_x == 700
+    assert state.camera.center_y == 800
+    assert state.camera.scale == 1.1
+
+
+def test_timeline_camera_returns():
+    script = parse_script(FIXTURES / "sample.xml")
+    scene = script.blocks[0]
+
+    # t=10.0: second camera event settled (8.0 + 1.5 = 9.5 < 10.0)
+    state = evaluate_timeline(scene, script.assets, 10.0)
+    assert state.camera.center_x == 960
+    assert state.camera.center_y == 540
+    assert state.camera.scale == 1.0
+
+
+def test_timeline_bob_exited():
+    script = parse_script(FIXTURES / "sample.xml")
+    scene = script.blocks[0]
+
+    # t=10.0: exit completed (8.5 + 0.8 = 9.3 < 10.0)
+    state = evaluate_timeline(scene, script.assets, 10.0)
+    assert "bob" not in state.characters or not state.characters["bob"].visible
+
+
+def test_timeline_dialogue():
+    script = parse_script(FIXTURES / "sample.xml")
+    scene = script.blocks[0]
+
+    # t=6.0: dialogue active (4.5 to 7.0)
+    state = evaluate_timeline(scene, script.assets, 6.0)
+    assert state.subtitle_text is not None
+    assert "Alice" in state.subtitle_text
+    assert "你好" in state.subtitle_text
+
+    # t=3.0: dialogue not yet started
+    state2 = evaluate_timeline(scene, script.assets, 3.0)
+    assert state2.subtitle_text is None
+
+
+def test_timeline_expression():
+    script = parse_script(FIXTURES / "sample.xml")
+    scene = script.blocks[0]
+
+    # t=7.0: expression changed (start=6.0)
+    state = evaluate_timeline(scene, script.assets, 7.0)
+    assert state.characters["alice"].sprite_key == "alice_shy"
+
+    # t=5.0: expression not yet
+    state2 = evaluate_timeline(scene, script.assets, 5.0)
+    assert state2.characters["alice"].sprite_key == "alice"
+
+
+def test_ease_in_out_midpoint():
+    script = parse_script(FIXTURES / "sample.xml")
+    scene = script.blocks[0]
+
+    # t=3.0: move at midpoint (2.0 to 4.0, t=3.0 = 50% progress)
+    # With ease_in_out, halfway should be at 50% of path since ease_in_out gives 0.5 at t=0.5
+    state = evaluate_timeline(scene, script.assets, 3.0)
+    # Bob moving from (1100, 800) to (700, 800)
+    assert state.characters["bob"].x == 900  # halfway
+    assert state.characters["bob"].y == 800
+
+
+def test_timeline_move_active():
+    script = parse_script(FIXTURES / "sample.xml")
+    scene = script.blocks[0]
+
+    # t=2.5: move at 25% progress (but with ease_in_out, eased=2*(0.25)^2=0.125)
+    state = evaluate_timeline(scene, script.assets, 2.5)
+    # Linear 25% would be 1100 - 400*0.25 = 1000
+    # ease_in_out 25%: ease_in_out(0.25) = 2*0.25*0.25 = 0.125
+    expected_x = 1100 + (700 - 1100) * 0.125  # 1100 - 50 = 1050
+    assert abs(state.characters["bob"].x - expected_x) < 0.1

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<comic_script version="1.0">
+  <meta title="公园初遇" author="AI导演" />
+
+  <assets>
+    <character id="alice" name="Alice" src="alice.png" />
+    <character id="bob" name="Bob" src="bob.png" />
+    <expression character="alice" id="alice_shy" src="alice_shy.png" />
+    <background id="park" src="park_bg.jpg" />
+    <audio id="bgm_peace" src="peace.mp3" />
+  </assets>
+
+  <scene id="1" background="park" duration="10.0">
+    <initial_camera center_x="960" center_y="540" scale="1.0" />
+    <initial_characters>
+      <place character="alice" x="400" y="800" />
+    </initial_characters>
+
+    <timeline>
+      <audio ref="bgm_peace" action="play" start="0" loop="true" volume="0.5" />
+
+      <enter character="bob" method="slide_left" start="0.5" duration="0.8"
+             target_x="1100" target_y="800" />
+
+      <move character="bob" start="2.0" duration="2.0"
+            to_x="700" to_y="800" easing="ease_in_out" />
+
+      <camera target="bob" scale="1.1" start="2.0" duration="2.0" easing="ease_out" />
+
+      <dialogue character="alice" start="4.5" duration="2.5"
+                text="你好，今天天气真好！" />
+
+      <expression character="alice" set="alice_shy" start="6.0" />
+
+      <move character="alice" start="6.5" duration="1.0"
+            to_x="450" to_y="780" easing="linear" />
+
+      <camera center_x="960" center_y="540" scale="1.0" start="8.0" duration="1.5" />
+
+      <exit character="bob" method="slide_right" start="8.5" duration="0.8" />
+    </timeline>
+  </scene>
+</comic_script>
