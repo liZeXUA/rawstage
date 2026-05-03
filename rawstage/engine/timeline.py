@@ -277,8 +277,7 @@ def _resolve_dialogue(
     # Take the most recently started one (handles overlapping case)
     event = max(active, key=lambda e: e.start)
 
-    char_name = assets.characters[event.character].name if event.character in assets.characters else event.character
-    return f"{char_name}：{event.text}"
+    return event.text
 
 
 # ---- Enter/Exit position helpers ----

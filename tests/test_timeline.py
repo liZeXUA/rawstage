@@ -81,7 +81,6 @@ def test_timeline_dialogue():
     # t=6.0: dialogue active (4.5 to 7.0)
     state = evaluate_timeline(scene, script.assets, 6.0)
     assert state.subtitle_text is not None
-    assert "Alice" in state.subtitle_text
     assert "你好" in state.subtitle_text
 
     # t=3.0: dialogue not yet started
