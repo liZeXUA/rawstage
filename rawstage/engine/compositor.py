@@ -50,8 +50,8 @@ def composite_frame(bg_image: Image.Image,
                 resized if resized.mode == "RGBA" else None)
 
     # 3. Subtitle (screen-space, fixed at bottom center)
-    if state.subtitle_text:
-        sub_img = render_subtitle(state.subtitle_text, CANVAS_W, CANVAS_H)
+    if state.subtitle:
+        sub_img = render_subtitle(state.subtitle, CANVAS_W, CANVAS_H)
         sub_x = (CANVAS_W - sub_img.width) // 2
         sub_y = CANVAS_H - sub_img.height - 60
         frame.paste(sub_img, (sub_x, sub_y), sub_img)

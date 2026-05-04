@@ -4,7 +4,7 @@ from rawstage.parser import parse_script
 from rawstage.errors import ParseError
 from rawstage.parser.models import (
     Script, Scene, Transition, EnterEvent, MoveEvent, CameraEvent,
-    DialogueEvent, ExpressionEvent, ExitEvent, AudioEvent,
+    DialogueEvent, ExpressionEvent, ExitEvent, AudioEvent, DialogueSpan,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -79,3 +79,56 @@ def test_events_sorted():
     scene = script.blocks[0]
     starts = [e.start for e in scene.events]
     assert starts == sorted(starts)
+
+
+def test_parse_rich_text():
+    script = parse_script(FIXTURES / "rich_text.xml")
+    scene = script.blocks[0]
+    events = scene.events
+
+    # First dialogue: plain text (backward compat)
+    d0 = events[0]
+    assert isinstance(d0, DialogueEvent)
+    assert d0.text == "普通的白色字幕"
+    assert d0.spans is None
+    assert d0.font_size == 40
+    assert d0.color == "#FFFFFF"
+
+    # Second dialogue: mixed styles
+    d1 = events[1]
+    assert isinstance(d1, DialogueEvent)
+    assert d1.font_size == 48
+    assert d1.outline_width == 2
+    assert d1.outline_color == "#333333"
+    assert d1.spans is not None
+    assert len(d1.spans) == 2
+    assert d1.spans[0].text == "绿色斜体，"
+    assert d1.spans[0].color == "#00FF00"
+    assert d1.spans[0].italic is True
+    assert d1.spans[1].text == "红色粗体下划线"
+    assert d1.spans[1].color == "#FF0000"
+    assert d1.spans[1].underline is True
+    assert d1.spans[1].bold is True
+
+    # Third dialogue: per-span font sizes
+    d2 = events[2]
+    assert isinstance(d2, DialogueEvent)
+    assert d2.color == "#FFFF00"
+    assert d2.spans is not None
+    assert len(d2.spans) == 2
+    assert d2.spans[0].size == 36
+    assert d2.spans[0].text == "小字，"
+    assert d2.spans[1].size == 60
+    assert d2.spans[1].color == "#00BFFF"
+
+
+def test_rich_text_span_defaults():
+    """Span without explicit styles inherits dialogue defaults."""
+    script = parse_script(FIXTURES / "rich_text.xml")
+    scene = script.blocks[0]
+    d2 = scene.events[2]
+    span0 = d2.spans[0]
+    assert span0.italic is False
+    assert span0.underline is False
+    assert span0.bold is False
+    assert span0.font is None

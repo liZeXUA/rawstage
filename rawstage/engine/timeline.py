@@ -3,6 +3,7 @@ from math import hypot
 from rawstage.parser.models import (
     Scene, Assets, FrameState, CameraState, CharacterState,
     EnterEvent, ExitEvent, MoveEvent, CameraEvent, DialogueEvent, ExpressionEvent,
+    SubtitleData, SubtitleSpan, DialogueSpan,
 )
 from rawstage.engine.easing import EASING_MAP
 
@@ -64,7 +65,7 @@ def evaluate_timeline(scene: Scene, assets: Assets, t: float) -> FrameState:
     # --- 4. Dialogue ---
     subtitle = _resolve_dialogue(dialogue_events, assets, t)
 
-    return FrameState(camera=camera, characters=visible_chars, subtitle_text=subtitle)
+    return FrameState(camera=camera, characters=visible_chars, subtitle=subtitle)
 
 
 def _resolve_visibility(
@@ -267,17 +268,61 @@ def _resolve_dialogue(
     dialogue_events: list[DialogueEvent],
     assets: Assets,
     t: float,
-) -> str | None:
-    """Find active dialogue at time t. Returns formatted subtitle or None."""
+) -> SubtitleData | None:
+    """Find active dialogue at time t. Returns resolved SubtitleData or None."""
     active = [e for e in dialogue_events
               if e.start <= t <= e.start + e.duration]
     if not active:
         return None
 
-    # Take the most recently started one (handles overlapping case)
     event = max(active, key=lambda e: e.start)
+    return _dialogue_to_subtitle(event)
 
-    return event.text
+
+def _hex_to_rgba(hex_color: str) -> tuple[int, int, int, int]:
+    """Convert hex color string to RGBA tuple."""
+    h = hex_color.lstrip("#")
+    if len(h) == 6:
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
+    elif len(h) == 8:
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), int(h[6:8], 16))
+    return (255, 255, 255, 255)
+
+
+def _dialogue_to_subtitle(event: DialogueEvent) -> SubtitleData:
+    """Convert a DialogueEvent to SubtitleData, resolving spans."""
+    outline_color = _hex_to_rgba(event.outline_color)
+    default_color = _hex_to_rgba(event.color)
+    default_font = event.font or None
+
+    if event.spans:
+        resolved_spans = [
+            SubtitleSpan(
+                text=s.text,
+                color=_hex_to_rgba(s.color) if s.color else default_color,
+                font_size=s.size if s.size is not None else event.font_size,
+                italic=s.italic,
+                underline=s.underline,
+                bold=s.bold,
+                font_path=s.font or default_font,
+            )
+            for s in event.spans
+        ]
+    else:
+        resolved_spans = [
+            SubtitleSpan(
+                text=event.text,
+                color=default_color,
+                font_size=event.font_size,
+                font_path=default_font,
+            )
+        ]
+
+    return SubtitleData(
+        spans=resolved_spans,
+        outline_width=event.outline_width,
+        outline_color=outline_color,
+    )
 
 
 # ---- Enter/Exit position helpers ----

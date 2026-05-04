@@ -32,10 +32,55 @@ rawstage render script.xml --assets ./assets/ --output out.mp4 --fps 24
 | `exit` | character, method (fade_out/slide_*), start, duration |
 | `move` | character, to_x, to_y, path (waypoints), easing, start, duration |
 | `camera` | target (character), center_x, center_y, scale, easing, start, duration |
-| `dialogue` | character, text, start, duration |
+| `dialogue` | character, text, start, duration, font, font_size, color, outline_width, outline_color, `<span>` children |
 | `expression` | character, set (expression asset id), start |
 | `audio` | ref, action (play/play_once), loop, volume, start |
 | `transition` | type (fade/dissolve/wipe_left/wipe_right), duration |
+
+### Subtitle styling
+
+`<dialogue>` supports two forms:
+
+**Plain text** (backward compatible) — all text in a single `text` attribute:
+
+```xml
+<dialogue character="alice" start="4.5" duration="2.5"
+          text="你好，今天天气真好！" />
+```
+
+**Rich text** — use `<span>` children for mixed styles within one subtitle line:
+
+```xml
+<dialogue character="alice" start="3.0" duration="3.0"
+          font_size="48" color="#FFFFFF"
+          outline_width="2" outline_color="#333333">
+  <span color="#00FF00" italic="true">绿色斜体，</span>
+  <span color="#FF0000" underline="true" bold="true">红色粗体下划线</span>
+</dialogue>
+```
+
+Dialogue-level attributes serve as defaults for all spans:
+
+| Attribute | Default | Description |
+|-----------|---------|-------------|
+| `font` | (system CJK font) | Font file path |
+| `font_size` | 40 | Default font size in pixels |
+| `color` | `#FFFFFF` | Default text color (hex RGB / RGBA) |
+| `outline_width` | 3 | Outline thickness in pixels |
+| `outline_color` | `#000000` | Outline color (hex RGB / RGBA) |
+
+Each `<span>` can override:
+
+| Attribute | Description |
+|-----------|-------------|
+| `color` | Text color (hex, e.g. `#FF0000`) |
+| `size` | Font size override |
+| `italic` | `"true"` / `"false"` |
+| `underline` | `"true"` / `"false"` |
+| `bold` | `"true"` / `"false"` |
+| `font` | Font file path override |
+
+Spans are concatenated horizontally with baseline alignment. If no `<span>` children are present, the `text` attribute is rendered as a single span using dialogue-level defaults.
 
 ## Key design decisions
 

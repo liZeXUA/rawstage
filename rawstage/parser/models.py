@@ -94,9 +94,27 @@ class CameraEvent(TimelineEvent):
 
 
 @dataclass(slots=True)
+class DialogueSpan:
+    """A styled text segment within a dialogue line."""
+    text: str
+    color: str | None = None       # hex e.g. "#FF0000"
+    size: int | None = None        # font size override
+    italic: bool = False
+    underline: bool = False
+    bold: bool = False
+    font: str | None = None        # font file path override
+
+
+@dataclass(slots=True)
 class DialogueEvent(TimelineEvent):
     character: str
     text: str
+    spans: list[DialogueSpan] | None = None
+    font: str | None = None        # default font file path
+    font_size: int = 40
+    color: str = "#FFFFFF"         # default hex color
+    outline_width: int = 3
+    outline_color: str = "#000000"
 
 
 @dataclass(slots=True)
@@ -159,7 +177,27 @@ class CharacterState:
 
 
 @dataclass(slots=True)
+class SubtitleSpan:
+    """Resolved subtitle span ready for rendering."""
+    text: str
+    color: tuple[int, int, int, int]  # RGBA
+    font_size: int
+    italic: bool = False
+    underline: bool = False
+    bold: bool = False
+    font_path: str | None = None
+
+
+@dataclass(slots=True)
+class SubtitleData:
+    """Resolved subtitle with styled spans and outline settings."""
+    spans: list[SubtitleSpan]
+    outline_width: int = 3
+    outline_color: tuple[int, int, int, int] = (0, 0, 0, 255)
+
+
+@dataclass(slots=True)
 class FrameState:
     camera: CameraState = field(default_factory=CameraState)
     characters: dict[str, CharacterState] = field(default_factory=dict)
-    subtitle_text: str | None = None
+    subtitle: SubtitleData | None = None

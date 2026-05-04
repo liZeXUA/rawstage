@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<comic_script version="1.0">
+  <meta title="Rich Text Test" author="AI导演" />
+
+  <assets>
+    <character id="alice" name="Alice" src="alice.png" />
+    <background id="park" src="park_bg.jpg" />
+  </assets>
+
+  <scene id="1" background="park" duration="10.0">
+    <initial_camera center_x="960" center_y="540" scale="1.0" />
+    <initial_characters>
+      <place character="alice" x="400" y="800" />
+    </initial_characters>
+
+    <timeline>
+      <!-- Plain text (backward compatible) -->
+      <dialogue character="alice" start="0.5" duration="2.0"
+                text="普通的白色字幕" />
+
+      <!-- Rich text with mixed styles -->
+      <dialogue character="alice" start="3.0" duration="3.0"
+                font_size="48" outline_width="2" outline_color="#333333">
+        <span color="#00FF00" italic="true">绿色斜体，</span>
+        <span color="#FF0000" underline="true" bold="true">红色粗体下划线</span>
+      </dialogue>
+
+      <!-- Custom font size per span -->
+      <dialogue character="alice" start="6.5" duration="2.5"
+                color="#FFFF00">
+        <span size="36">小字，</span>
+        <span size="60" color="#00BFFF">大字蓝色</span>
+      </dialogue>
+    </timeline>
+  </scene>
+</comic_script>

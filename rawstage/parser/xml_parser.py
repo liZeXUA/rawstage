@@ -7,7 +7,7 @@ from rawstage.parser.models import (
     Scene, Transition, Script,
     InitialCamera, Place,
     EnterEvent, ExitEvent, MoveEvent, CameraEvent, DialogueEvent,
-    ExpressionEvent, AudioEvent,
+    ExpressionEvent, AudioEvent, DialogueSpan,
 )
 
 VALID_ENTER_METHODS = {"fade_in", "slide_left", "slide_right", "slide_up", "slide_down", "pop_in"}
@@ -201,8 +201,35 @@ def _parse_timeline(el, assets: Assets, scene_id: str) -> list:
             char = attrs.get("character", "")
             _check_character(char, assets, scene_id, "dialogue")
             text = attrs.get("text", "")
+            font = attrs.get("font") or None
+            font_size = int(attrs.get("font_size", 40))
+            color = attrs.get("color", "#FFFFFF")
+            outline_width = int(attrs.get("outline_width", 3))
+            outline_color = attrs.get("outline_color", "#000000")
+
+            spans: list[DialogueSpan] | None = None
+            span_children = list(child)
+            if span_children:
+                spans = []
+                for span_el in span_children:
+                    if span_el.tag != "span":
+                        continue
+                    spans.append(DialogueSpan(
+                        text=span_el.text or "",
+                        color=span_el.get("color") or None,
+                        size=int(span_el.get("size")) if span_el.get("size") else None,
+                        italic=span_el.get("italic", "false").lower() == "true",
+                        underline=span_el.get("underline", "false").lower() == "true",
+                        bold=span_el.get("bold", "false").lower() == "true",
+                        font=span_el.get("font") or None,
+                    ))
+                if not spans:
+                    spans = None
+
             events.append(DialogueEvent(
-                start=start, duration=duration, character=char, text=text))
+                start=start, duration=duration, character=char, text=text,
+                spans=spans, font=font, font_size=font_size, color=color,
+                outline_width=outline_width, outline_color=outline_color))
 
         elif tag == "expression":
             char = attrs.get("character", "")
