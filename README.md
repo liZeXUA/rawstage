@@ -5,7 +5,7 @@ ComicDirector ML v1.0 rendering engine. Parses XML performance instructions and 
 ## Install
 
 ```bash
-pip install -e .
+pip install rawstage
 ```
 
 Requires `ffmpeg` on PATH for video encoding.
