@@ -13,13 +13,13 @@ from collections.abc import Callable
 from PIL import Image
 
 from rawstage.parser.models import (
-    Script, Scene, Transition, AudioEvent,
+    Script, Scene, Transition, AudioEvent, ExpressionEvent,
     Assets,
 )
 from rawstage.asset_loader import load_image, clear_cache
 from rawstage.engine.timeline import evaluate_timeline
 from rawstage.engine.compositor import composite_frame, CANVAS_W, CANVAS_H
-from rawstage.encoder import encode_video
+from rawstage.encoder import encode_video, encode_video_pipe
 from rawstage.errors import RawStageError
 
 
@@ -33,28 +33,79 @@ def render_script(
     verbose: bool = False,
     progress_cb: Callable[[int, int], None] | None = None,
 ) -> None:
-    """Render a complete script to MP4 video.
-
-    Args:
-        script: Parsed Script with interleaved Scene and Transition blocks.
-        assets_root: Root directory for asset file paths.
-        output_path: Output MP4 file path.
-        fps: Frames per second.
-        preset: x264 preset (ultrafast for dev, medium for production).
-        keep_frames: If True, keep temp PNG directory after encoding.
-        verbose: Print progress information.
-        progress_cb: Optional callback(current_frame, total_frames) for progress.
-    """
-    temp_dir = Path(tempfile.mkdtemp(prefix="rawstage_"))
-    try:
-        _render_frames(script, assets_root, temp_dir, fps, verbose, progress_cb)
-        _encode_result(script, assets_root, temp_dir, output_path, fps, preset)
-    finally:
-        if not keep_frames:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        elif verbose:
-            print(f"  Temp frames kept at: {temp_dir}")
+    if keep_frames:
+        # Legacy path: render to PNG files, then encode
+        temp_dir = Path(tempfile.mkdtemp(prefix="rawstage_"))
+        try:
+            _render_frames(script, assets_root, temp_dir, fps, verbose, progress_cb)
+            _encode_result(script, assets_root, temp_dir, output_path, fps, preset)
+        finally:
+            if verbose:
+                print(f"  Temp frames kept at: {temp_dir}")
+            clear_cache()
+    else:
+        # Fast path: pipe raw RGB directly to ffmpeg
+        _render_pipe(script, assets_root, output_path, fps, preset, verbose, progress_cb)
         clear_cache()
+
+
+def _render_pipe(
+    script: Script,
+    assets_root: Path,
+    output_path: Path,
+    fps: int,
+    preset: str,
+    verbose: bool,
+    progress_cb: Callable[[int, int], None] | None,
+) -> None:
+    """Render frames and pipe them directly to ffmpeg via stdin."""
+    items = script.blocks
+    scenes_list = [b for b in items if isinstance(b, Scene)]
+
+    # Pre-load all scene images
+    scenes_data: list[dict] = []
+    for scene in scenes_list:
+        images = _load_scene_images(scene, script, assets_root)
+        chars = {k: v for k, v in images.items() if k in script.assets.characters}
+        exprs = {k: v for k, v in images.items() if k in script.assets.expressions}
+        facs = {k: v for k, v in images.items() if k in script.assets.facilities}
+        scenes_data.append({
+            "scene": scene,
+            "chars": chars,
+            "exprs": exprs,
+            "facs": facs,
+        })
+
+    total_duration, segments = _build_timeline(items)
+    total_frames = math.ceil(total_duration * fps)
+
+    if verbose:
+        title = script.meta.get("title", "untitled")
+        print(f"Rendering \"{title}\": {total_frames} frames at {fps} fps "
+              f"({total_duration:.1f}s)")
+
+    audio_inputs = _compute_audio_inputs(script, assets_root, items, segments)
+
+    def frame_generator():
+        for frame_num in range(total_frames):
+            t = frame_num / fps
+            frame_img = _render_single_frame(t, segments, scenes_data, script, fps)
+            yield frame_img
+            if progress_cb:
+                progress_cb(frame_num, total_frames)
+            elif verbose and frame_num % 24 == 0:
+                print(f"  Frame {frame_num}/{total_frames} (t={t:.2f}s)")
+
+    encode_video_pipe(
+        output_path=output_path,
+        fps=fps,
+        total_frames=total_frames,
+        canvas_w=CANVAS_W,
+        canvas_h=CANVAS_H,
+        preset=preset,
+        audio_inputs=audio_inputs if audio_inputs else None,
+        frame_iter=frame_generator(),
+    )
 
 
 def _render_frames(
@@ -65,26 +116,22 @@ def _render_frames(
     verbose: bool,
     progress_cb: Callable[[int, int], None] | None,
 ) -> None:
-    """Render all frames to temp_dir/frame_000000.png ..."""
-    # Extract scenes and transitions in order
-    items = script.blocks  # list[Scene | Transition]
+    items = script.blocks
 
-    # Pre-load images per scene (indexed by scene order, matching _build_timeline)
     scenes_list = [b for b in items if isinstance(b, Scene)]
     scenes_data: list[dict] = []
     for scene in scenes_list:
         images = _load_scene_images(scene, script, assets_root)
-        bg = images.pop("__bg__")
         chars = {k: v for k, v in images.items() if k in script.assets.characters}
         exprs = {k: v for k, v in images.items() if k in script.assets.expressions}
+        facs = {k: v for k, v in images.items() if k in script.assets.facilities}
         scenes_data.append({
             "scene": scene,
-            "bg": bg,
             "chars": chars,
             "exprs": exprs,
+            "facs": facs,
         })
 
-    # Build global timeline
     total_duration, segments = _build_timeline(items)
     total_frames = math.ceil(total_duration * fps)
 
@@ -93,11 +140,9 @@ def _render_frames(
         print(f"Rendering \"{title}\": {total_frames} frames at {fps} fps "
               f"({total_duration:.1f}s)")
 
-    scene_index = 0
     for frame_num in range(total_frames):
         t = frame_num / fps
 
-        # Find which segment this frame belongs to
         frame_img = _render_single_frame(t, segments, scenes_data, script, fps)
 
         path = temp_dir / f"frame_{frame_num:06d}.png"
@@ -119,15 +164,12 @@ def _render_single_frame(
     script: Script,
     fps: int,
 ) -> Image.Image:
-    """Render one frame at global time t, handling transitions."""
-    # Find the segment containing time t
     seg = None
     for s in segments:
         if s["global_start"] <= t < s["global_end"]:
             seg = s
             break
     if seg is None:
-        # Past the end, render last scene at its final time
         seg = segments[-1]
         t = seg["global_end"]
 
@@ -136,10 +178,9 @@ def _render_single_frame(
         scene = sd["scene"]
         scene_t = t - seg["scene_start"]
         state = evaluate_timeline(scene, script.assets, min(scene_t, scene.duration))
-        return composite_frame(sd["bg"], sd["chars"], sd["exprs"], state)
+        return composite_frame(sd["chars"], sd["exprs"], sd["facs"], state)
 
     elif seg["type"] == "transition":
-        # Blend two scenes
         transition = seg["transition"]
         dt = transition.duration
         progress = (t - seg["global_start"]) / max(dt, 0.001)
@@ -149,18 +190,17 @@ def _render_single_frame(
         scene_a = sd_a["scene"]
         scene_a_t = t - seg["scene_a_start"]
         state_a = evaluate_timeline(scene_a, script.assets, min(scene_a_t, scene_a.duration))
-        frame_a = composite_frame(sd_a["bg"], sd_a["chars"], sd_a["exprs"], state_a)
+        frame_a = composite_frame(sd_a["chars"], sd_a["exprs"], sd_a["facs"], state_a)
 
         # Scene B (incoming)
         sd_b = scenes_data[seg["scene_b_index"]]
         scene_b = sd_b["scene"]
         scene_b_t = t - seg["scene_b_start"]
         state_b = evaluate_timeline(scene_b, script.assets, min(scene_b_t, scene_b.duration))
-        frame_b = composite_frame(sd_b["bg"], sd_b["chars"], sd_b["exprs"], state_b)
+        frame_b = composite_frame(sd_b["chars"], sd_b["exprs"], sd_b["facs"], state_b)
 
         return _blend_frames(frame_a, frame_b, progress, transition.type)
 
-    # Fallback: black frame
     return Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 255))
 
 
@@ -170,18 +210,11 @@ def _blend_frames(
     progress: float,
     blend_type: str,
 ) -> Image.Image:
-    """Blend two frames during a transition.
-
-    progress: 0.0 = fully scene A, 1.0 = fully scene B.
-    """
     if blend_type in ("fade", "dissolve"):
-        # Crossfade: uniform alpha blend
-        alpha_b = progress
         return Image.blend(
-            frame_a.convert("RGBA"), frame_b.convert("RGBA"), alpha_b)
+            frame_a.convert("RGBA"), frame_b.convert("RGBA"), progress)
 
     elif blend_type == "wipe_left":
-        # Scene B reveals from left to right
         result = frame_a.copy()
         split = int(CANVAS_W * progress)
         if split > 0:
@@ -190,7 +223,6 @@ def _blend_frames(
         return result
 
     elif blend_type == "wipe_right":
-        # Scene B reveals from right to left
         result = frame_a.copy()
         split = int(CANVAS_W * (1.0 - progress))
         if split < CANVAS_W:
@@ -198,24 +230,13 @@ def _blend_frames(
             result.paste(crop_b, (split, 0))
         return result
 
-    # Unknown: crossfade
     return Image.blend(
         frame_a.convert("RGBA"), frame_b.convert("RGBA"), progress)
 
 
 def _build_timeline(items: list) -> tuple[float, list[dict]]:
-    """Compute global time ranges for each segment.
-
-    Returns (total_duration, list of segment dicts). Each segment dict has:
-      type: "scene" or "transition"
-      global_start, global_end
-      For scenes: scene_index, scene_start
-      For transitions: scene_a_index, scene_b_index, scene_a_start, scene_b_start,
-                       transition
-    """
-    # First pass: compute scene durations and identify transitions
     scenes: list[Scene] = []
-    transitions: list[tuple[int, Transition]] = []  # (position_between_scenes, transition)
+    transitions: list[tuple[int, Transition]] = []
     for i, item in enumerate(items):
         if isinstance(item, Scene):
             scenes.append(item)
@@ -225,30 +246,23 @@ def _build_timeline(items: list) -> tuple[float, list[dict]]:
     if not scenes:
         return 0.0, []
 
-    # Build timeline accounting for transition overlaps.
-    # current_global tracks the next unallocated global time.
-    # prev_overlap tracks how much of the current scene was already covered
-    # by a transition from the previous scene.
     segments: list[dict] = []
     current_global = 0.0
     prev_overlap = 0.0
 
     for i, scene in enumerate(scenes):
-        # Find transition after this scene (if any)
         trans = None
         for si, t in transitions:
             if si == i:
                 trans = t
                 break
 
-        # Scene t=0 in global time (accounting for overlap from previous transition)
         scene_t0 = current_global - prev_overlap
 
         if trans:
             overlap = trans.duration
             scene_end = scene_t0 + scene.duration
 
-            # Scene non-overlap portion (before transition starts)
             if scene.duration > overlap:
                 segments.append({
                     "type": "scene",
@@ -258,7 +272,6 @@ def _build_timeline(items: list) -> tuple[float, list[dict]]:
                     "scene_start": scene_t0,
                 })
 
-            # Transition overlap portion
             segments.append({
                 "type": "transition",
                 "global_start": scene_end - overlap,
@@ -273,8 +286,6 @@ def _build_timeline(items: list) -> tuple[float, list[dict]]:
             current_global = scene_end
             prev_overlap = overlap
         else:
-            # No transition after this scene. Scene runs from current_global
-            # for its remaining (un-overlapped) duration.
             remaining = scene.duration - prev_overlap
             segment_end = current_global + remaining
             segments.append({
@@ -299,7 +310,6 @@ def _encode_result(
     fps: int,
     preset: str,
 ) -> None:
-    """Collect audio and call encoder."""
     items = script.blocks
     segments = _build_timeline(items)[1]
     total_frames = math.ceil(
@@ -326,10 +336,8 @@ def _compute_audio_inputs(
     items: list[Scene | Transition],
     segments: list[dict],
 ) -> list[tuple[Path, float, float, bool, float]]:
-    """Map scene audio events to global time for the encoder."""
     scenes_list = [it for it in items if isinstance(it, Scene)]
 
-    # Compute the earliest global t=0 for each scene
     scene_t0: dict[str, float] = {}
     for seg in segments:
         if seg["type"] == "scene":
@@ -371,17 +379,20 @@ def _compute_audio_inputs(
 
 
 def _load_scene_images(scene: Scene, script: Script, assets_root: Path) -> dict:
-    """Load all images referenced by a scene."""
+    """Load all images referenced by a scene: facilities, characters, expressions."""
     images = {}
 
-    bg_asset = script.assets.backgrounds[scene.background]
-    images["__bg__"] = load_image(assets_root / bg_asset.src)
+    # Facilities
+    for place in scene.initial_facilities:
+        fac_asset = script.assets.facilities[place.facility]
+        images[place.facility] = load_image(assets_root / fac_asset.src)
 
+    # Characters in initial_characters
     for place in scene.initial_characters:
         char_asset = script.assets.characters[place.character]
         images[place.character] = load_image(assets_root / char_asset.src)
 
-    from rawstage.parser.models import ExpressionEvent
+    # Characters and expressions referenced in events
     for event in scene.events:
         char_id = getattr(event, "character", None)
         if char_id and char_id not in images:

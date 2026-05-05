@@ -14,17 +14,18 @@ def test_parse_minimal():
     script = parse_script(FIXTURES / "minimal.xml")
     assert script.meta["title"] == "Minimal Test"
     assert "alice" in script.assets.characters
-    assert "bg_park" in script.assets.backgrounds
+    assert "bg_park" in script.assets.facilities
     assert len(script.blocks) == 1
     scene = script.blocks[0]
     assert isinstance(scene, Scene)
     assert scene.id == "1"
     assert scene.duration == 5.0
-    assert scene.background == "bg_park"
     assert len(scene.initial_characters) == 1
     assert scene.initial_characters[0].character == "alice"
     assert scene.initial_characters[0].x == 400
     assert scene.initial_characters[0].y == 800
+    assert len(scene.initial_facilities) == 1
+    assert scene.initial_facilities[0].facility == "bg_park"
     assert scene.initial_camera.center_x == 960
     assert scene.initial_camera.scale == 1.0
 
@@ -34,6 +35,7 @@ def test_parse_sample():
     assert script.meta["title"] == "公园初遇"
     assert len(script.assets.characters) == 2
     assert "alice_shy" in script.assets.expressions
+    assert "park" in script.assets.facilities
     assert len(script.blocks) == 1
     scene = script.blocks[0]
     assert scene.duration == 10.0
@@ -63,7 +65,6 @@ def test_parse_sample():
 
 def test_missing_asset():
     xml = FIXTURES / "minimal.xml"
-    # Should parse fine since we reference valid assets
     script = parse_script(xml)
     assert script is not None
 
@@ -132,3 +133,19 @@ def test_rich_text_span_defaults():
     assert span0.underline is False
     assert span0.bold is False
     assert span0.font is None
+
+
+def test_facility_layer_z():
+    script = parse_script(FIXTURES / "minimal.xml")
+    fac = script.assets.facilities["bg_park"]
+    assert fac.layer == "background"
+    assert fac.z == 0
+
+
+def test_character_layer_z():
+    script = parse_script(FIXTURES / "sample.xml")
+    alice = script.assets.characters["alice"]
+    assert alice.layer == "platform"
+    assert alice.z == 100
+    bob = script.assets.characters["bob"]
+    assert bob.z == 110

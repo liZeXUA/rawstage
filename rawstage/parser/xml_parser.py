@@ -3,7 +3,7 @@ from lxml import etree
 
 from rawstage.errors import ParseError
 from rawstage.parser.models import (
-    Assets, CharacterAsset, ExpressionAsset, BackgroundAsset, AudioAsset,
+    Assets, CharacterAsset, ExpressionAsset, FacilityAsset, AudioAsset,
     Scene, Transition, Script,
     InitialCamera, Place,
     EnterEvent, ExitEvent, MoveEvent, CameraEvent, DialogueEvent,
@@ -50,19 +50,31 @@ def _parse_assets(el) -> Assets:
         asset_id = attrs.pop("id", None)
 
         if tag == "character":
+            layer = attrs.pop("layer", "platform")
+            z = int(attrs.pop("z", 100))
+            _validate_z(z, asset_id)
             assets.characters[asset_id] = CharacterAsset(
-                id=asset_id, name=attrs.get("name", asset_id), src=attrs.get("src", ""))
+                id=asset_id, name=attrs.get("name", asset_id),
+                src=attrs.get("src", ""), layer=layer, z=z)
         elif tag == "expression":
             assets.expressions[asset_id] = ExpressionAsset(
                 id=asset_id, character=attrs.get("character", ""), src=attrs.get("src", ""))
-        elif tag == "background":
-            assets.backgrounds[asset_id] = BackgroundAsset(
-                id=asset_id, src=attrs.get("src", ""))
+        elif tag == "facility":
+            layer = attrs.pop("layer", "midground")
+            z = int(attrs.pop("z", 50))
+            _validate_z(z, asset_id)
+            assets.facilities[asset_id] = FacilityAsset(
+                id=asset_id, src=attrs.get("src", ""), layer=layer, z=z)
         elif tag == "audio":
             assets.audios[asset_id] = AudioAsset(
                 id=asset_id, src=attrs.get("src", ""))
 
     return assets
+
+
+def _validate_z(z: int, asset_id: str) -> None:
+    if not 0 <= z <= 200:
+        raise ParseError(f"Asset '{asset_id}': z must be 0-200, got {z}")
 
 
 def _parse_blocks(root, assets: Assets) -> list[Scene | Transition]:
@@ -74,7 +86,6 @@ def _parse_blocks(root, assets: Assets) -> list[Scene | Transition]:
             blocks.append(_parse_scene(child, assets))
         elif child.tag == "transition":
             blocks.append(_parse_transition(child))
-        # meta and assets are parsed separately, skip here
 
     _validate_blocks(blocks)
     return blocks
@@ -82,24 +93,21 @@ def _parse_blocks(root, assets: Assets) -> list[Scene | Transition]:
 
 def _parse_scene(el, assets: Assets) -> Scene:
     scene_id = _require(el, "id")
-    background_ref = _require(el, "background")
     duration = float(_require(el, "duration"))
 
-    if background_ref not in assets.backgrounds:
-        raise ParseError(
-            f"Scene {scene_id}: background '{background_ref}' not declared in <assets>")
-
     initial_camera = _parse_initial_camera(el.find("initial_camera"))
-    initial_characters = _parse_initial_characters(
-        el.find("initial_characters"), assets, scene_id)
+    initial_characters = _parse_initial_places(
+        el.find("initial_characters"), assets, scene_id, "character")
+    initial_facilities = _parse_initial_places(
+        el.find("initial_facilities"), assets, scene_id, "facility")
     events = _parse_timeline(el.find("timeline"), assets, scene_id)
 
     return Scene(
         id=scene_id,
-        background=background_ref,
         duration=duration,
         initial_camera=initial_camera,
         initial_characters=initial_characters,
+        initial_facilities=initial_facilities,
         events=events,
     )
 
@@ -114,22 +122,38 @@ def _parse_initial_camera(el) -> InitialCamera:
     )
 
 
-def _parse_initial_characters(el, assets: Assets, scene_id: str) -> list[Place]:
+def _parse_initial_places(el, assets: Assets, scene_id: str,
+                          kind: str) -> list[Place]:
+    """Parse <place> children from an initial_characters or initial_facilities element.
+
+    kind: "character" or "facility"
+    """
     if el is None:
         return []
     places = []
     for child in el:
         if child.tag != "place":
             continue
-        char_id = _require(child, "character")
-        if char_id not in assets.characters:
-            raise ParseError(
-                f"Scene {scene_id}: character '{char_id}' not declared in <assets>")
-        places.append(Place(
-            character=char_id,
-            x=float(_require(child, "x")),
-            y=float(_require(child, "y")),
-        ))
+        if kind == "character":
+            char_id = _require(child, "character")
+            if char_id not in assets.characters:
+                raise ParseError(
+                    f"Scene {scene_id}: character '{char_id}' not declared in <assets>")
+            places.append(Place(
+                character=char_id,
+                x=float(_require(child, "x")),
+                y=float(_require(child, "y")),
+            ))
+        elif kind == "facility":
+            fac_id = _require(child, "facility")
+            if fac_id not in assets.facilities:
+                raise ParseError(
+                    f"Scene {scene_id}: facility '{fac_id}' not declared in <assets>")
+            places.append(Place(
+                facility=fac_id,
+                x=float(_require(child, "x")),
+                y=float(_require(child, "y")),
+            ))
     return places
 
 
@@ -286,15 +310,12 @@ def _validate_blocks(blocks: list[Scene | Transition]) -> None:
     if not blocks:
         raise ParseError("Script must contain at least one scene")
 
-    # First block must be a scene
     if isinstance(blocks[0], Transition):
         raise ParseError("Script cannot start with a transition")
 
-    # Last block must be a scene
     if isinstance(blocks[-1], Transition):
         raise ParseError("Script cannot end with a transition")
 
-    # No two transitions in a row
     for i in range(len(blocks) - 1):
         if isinstance(blocks[i], Transition) and isinstance(blocks[i + 1], Transition):
             raise ParseError("Cannot have two consecutive transitions")

@@ -3,14 +3,17 @@
   <meta title="Two Scene Test" author="Test" />
 
   <assets>
-    <character id="alice" name="Alice" src="alice.png" />
-    <character id="bob" name="Bob" src="bob.png" />
-    <background id="park" src="park_bg.jpg" />
-    <background id="night" src="park_bg.jpg" />
+    <character id="alice" name="Alice" src="alice.png" layer="platform" z="100" />
+    <character id="bob" name="Bob" src="bob.png" layer="platform" z="110" />
+    <facility id="park" src="park_bg.jpg" layer="background" z="0" />
+    <facility id="night" src="night_bg.jpg" layer="background" z="0" />
   </assets>
 
-  <scene id="1" background="park" duration="3.0">
+  <scene id="1" duration="3.0">
     <initial_camera center_x="960" center_y="540" scale="1.0" />
+    <initial_facilities>
+      <place facility="park" x="960" y="540" />
+    </initial_facilities>
     <initial_characters>
       <place character="alice" x="400" y="800" />
     </initial_characters>
@@ -22,8 +25,11 @@
 
   <transition type="fade" duration="1.0" />
 
-  <scene id="2" background="night" duration="3.0">
+  <scene id="2" duration="3.0">
     <initial_camera center_x="960" center_y="540" scale="1.0" />
+    <initial_facilities>
+      <place facility="night" x="960" y="540" />
+    </initial_facilities>
     <initial_characters>
       <place character="alice" x="600" y="800" />
     </initial_characters>

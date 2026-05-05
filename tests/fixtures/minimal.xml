@@ -2,11 +2,14 @@
 <comic_script version="1.0">
   <meta title="Minimal Test" author="test" />
   <assets>
-    <character id="alice" name="Alice" src="alice.png" />
-    <background id="bg_park" src="park.jpg" />
+    <character id="alice" name="Alice" src="alice.png" layer="platform" z="100" />
+    <facility id="bg_park" src="park.jpg" layer="background" z="0" />
   </assets>
-  <scene id="1" background="bg_park" duration="5.0">
+  <scene id="1" duration="5.0">
     <initial_camera center_x="960" center_y="540" scale="1.0" />
+    <initial_facilities>
+      <place facility="bg_park" x="960" y="540" />
+    </initial_facilities>
     <initial_characters>
       <place character="alice" x="400" y="800" />
     </initial_characters>

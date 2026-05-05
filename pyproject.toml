@@ -1,6 +1,6 @@
 [project]
 name = "rawstage"
-version = "0.1.0"
+version = "0.2.0"
 description = "Raw-style comic stage renderer — parses ComicDirector ML XML and outputs video"
 authors = [
     {name = "liZeXUA", email = "flffake@lizexua.com"},
@@ -12,6 +12,7 @@ requires-python = ">=3.11"
 dependencies = [
     "Pillow>=10.0",
     "lxml>=5.0",
+    "tqdm>=4.0",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

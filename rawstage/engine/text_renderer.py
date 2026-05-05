@@ -13,6 +13,25 @@ from rawstage.parser.models import SubtitleData, SubtitleSpan
 
 
 _FONT_CACHE: dict[tuple[str | None, int], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
+_subtitle_cache: dict[int, Image.Image] = {}
+_DUMMY = None
+
+
+def _dummy_draw():
+    global _DUMMY
+    if _DUMMY is None:
+        _DUMMY = Image.new("RGBA", (1, 1))
+    return ImageDraw.Draw(_DUMMY)
+
+
+def _subtitle_cache_key(subtitle: SubtitleData) -> int:
+    """Hash sufficient to identify identical subtitle renders."""
+    parts = [subtitle.outline_width, subtitle.outline_color]
+    for span in subtitle.spans:
+        parts.extend([span.text, span.color, span.font_size,
+                      span.italic, span.underline, span.bold,
+                      span.font_path or ""])
+    return hash(tuple(parts))
 
 
 def _find_font() -> str | None:
@@ -62,9 +81,14 @@ def render_subtitle(
 
     Returns a transparent RGBA image meant to be pasted at bottom-center
     of the frame. Handles mixed styles within a single subtitle line.
+    Results are cached by content hash.
     """
     if not subtitle.spans:
         return Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+
+    cache_key = _subtitle_cache_key(subtitle)
+    if cache_key in _subtitle_cache:
+        return _subtitle_cache[cache_key]
 
     # Render each span independently
     span_images: list[Image.Image] = []
@@ -86,6 +110,7 @@ def render_subtitle(
         combined.paste(img, (x, y), img)
         x += img.width
 
+    _subtitle_cache[cache_key] = combined
     return combined
 
 
@@ -94,8 +119,7 @@ def _render_span(span: SubtitleSpan, data: SubtitleData) -> Image.Image:
     font = _get_font(span.font_size, span.font_path)
 
     # Measure text
-    dummy = Image.new("RGBA", (1, 1))
-    draw = ImageDraw.Draw(dummy)
+    draw = _dummy_draw()
     text_w = int(draw.textlength(span.text, font=font))
     bbox = draw.textbbox((0, 0), span.text, font=font, anchor="lt")
     text_h = bbox[3] - bbox[1]
@@ -196,3 +220,4 @@ def _draw_underline(img: Image.Image, span: SubtitleSpan,
 
 def clear_font_cache() -> None:
     _FONT_CACHE.clear()
+    _subtitle_cache.clear()

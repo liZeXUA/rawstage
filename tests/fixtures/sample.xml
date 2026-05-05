@@ -3,15 +3,18 @@
   <meta title="公园初遇" author="AI导演" />
 
   <assets>
-    <character id="alice" name="Alice" src="alice.png" />
-    <character id="bob" name="Bob" src="bob.png" />
+    <character id="alice" name="Alice" src="alice.png" layer="platform" z="100" />
+    <character id="bob" name="Bob" src="bob.png" layer="platform" z="110" />
     <expression character="alice" id="alice_shy" src="alice_shy.png" />
-    <background id="park" src="park_bg.jpg" />
+    <facility id="park" src="park_bg.jpg" layer="background" z="0" />
     <audio id="bgm_peace" src="peace.mp3" />
   </assets>
 
-  <scene id="1" background="park" duration="10.0">
+  <scene id="1" duration="10.0">
     <initial_camera center_x="960" center_y="540" scale="1.0" />
+    <initial_facilities>
+      <place facility="park" x="960" y="540" />
+    </initial_facilities>
     <initial_characters>
       <place character="alice" x="400" y="800" />
     </initial_characters>

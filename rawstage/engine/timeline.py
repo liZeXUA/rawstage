@@ -1,7 +1,7 @@
 from math import hypot
 
 from rawstage.parser.models import (
-    Scene, Assets, FrameState, CameraState, CharacterState,
+    Scene, Assets, FrameState, CameraState, CharacterState, FacilityState,
     EnterEvent, ExitEvent, MoveEvent, CameraEvent, DialogueEvent, ExpressionEvent,
     SubtitleData, SubtitleSpan, DialogueSpan,
 )
@@ -26,6 +26,9 @@ def evaluate_timeline(scene: Scene, assets: Assets, t: float) -> FrameState:
     # Build character initial states from initial_characters
     char_states: dict[str, CharacterState] = {}
     for place in scene.initial_characters:
+        char_asset = assets.characters.get(place.character)
+        layer = char_asset.layer if char_asset else "platform"
+        z = char_asset.z if char_asset else 100
         char_states[place.character] = CharacterState(
             character_id=place.character,
             visible=True,
@@ -34,6 +37,23 @@ def evaluate_timeline(scene: Scene, assets: Assets, t: float) -> FrameState:
             opacity=1.0,
             scale=1.0,
             sprite_key=place.character,
+            layer=layer,
+            z=z,
+        )
+
+    # Build facility states from initial_facilities (static, no animation)
+    fac_states: dict[str, FacilityState] = {}
+    for place in scene.initial_facilities:
+        fac_asset = assets.facilities.get(place.facility)
+        if fac_asset is None:
+            continue
+        fac_states[place.facility] = FacilityState(
+            facility_id=place.facility,
+            x=place.x,
+            y=place.y,
+            sprite_key=place.facility,
+            layer=fac_asset.layer,
+            z=fac_asset.z,
         )
 
     # Separate events by type
@@ -49,11 +69,15 @@ def evaluate_timeline(scene: Scene, assets: Assets, t: float) -> FrameState:
         if t >= event.start:
             char_id = event.character
             if char_id not in char_states:
-                char_states[char_id] = CharacterState(character_id=char_id, sprite_key=char_id)
+                char_asset = assets.characters.get(char_id)
+                layer = char_asset.layer if char_asset else "platform"
+                z_val = char_asset.z if char_asset else 100
+                char_states[char_id] = CharacterState(
+                    character_id=char_id, sprite_key=char_id, layer=layer, z=z_val)
             char_states[char_id].sprite_key = event.set
 
     # --- 2. Visibility + Position ---
-    _resolve_visibility(char_states, enter_events, exit_events, t)
+    _resolve_visibility(char_states, enter_events, exit_events, t, assets)
     _resolve_positions(char_states, move_events, enter_events, exit_events, t)
 
     # Remove invisible characters
@@ -65,7 +89,12 @@ def evaluate_timeline(scene: Scene, assets: Assets, t: float) -> FrameState:
     # --- 4. Dialogue ---
     subtitle = _resolve_dialogue(dialogue_events, assets, t)
 
-    return FrameState(camera=camera, characters=visible_chars, subtitle=subtitle)
+    return FrameState(
+        camera=camera,
+        characters=visible_chars,
+        facilities=fac_states,
+        subtitle=subtitle,
+    )
 
 
 def _resolve_visibility(
@@ -73,6 +102,7 @@ def _resolve_visibility(
     enter_events: list[EnterEvent],
     exit_events: list[ExitEvent],
     t: float,
+    assets: Assets,
 ) -> None:
     """Determine which characters are visible at time t.
 
@@ -93,7 +123,11 @@ def _resolve_visibility(
 
     for char_id in all_chars:
         if char_id not in char_states:
-            char_states[char_id] = CharacterState(character_id=char_id, sprite_key=char_id)
+            char_asset = assets.characters.get(char_id)
+            layer = char_asset.layer if char_asset else "platform"
+            z_val = char_asset.z if char_asset else 100
+            char_states[char_id] = CharacterState(
+                character_id=char_id, sprite_key=char_id, layer=layer, z=z_val)
 
         # Collect enter/exit events for this character, sorted by start
         char_events = sorted(
@@ -106,22 +140,16 @@ def _resolve_visibility(
         for event in char_events:
             if isinstance(event, EnterEvent):
                 if event.start <= t < event.start + event.duration:
-                    # During enter animation
                     visible = True
                     break
                 elif event.start + event.duration <= t:
-                    # Enter fully complete
                     visible = True
-                # else: enter hasn't started yet, don't change
             elif isinstance(event, ExitEvent):
                 if event.start <= t < event.start + event.duration:
-                    # During exit animation
                     visible = True
                     break
                 elif event.start + event.duration <= t:
-                    # Exit fully complete
                     visible = False
-                # else: exit hasn't started yet, current visibility stands
 
         char_states[char_id].visible = visible
 
@@ -140,12 +168,8 @@ def _resolve_positions(
     2. Active exit animation -> interpolate from current to off-screen
     3. Active move animation -> interpolate along path or to target
     4. Settled position (end of last move, or enter target, or initial place)
-
-    We build a settled-position timeline by processing all events chronologically
-    and tracking the "at-rest" position between events.
     """
     for char_id, state in char_states.items():
-        # Build a sorted list of all position-affecting events for this character
         pos_events = sorted(
             [(e, "enter") for e in enter_events if e.character == char_id] +
             [(e, "exit") for e in exit_events if e.character == char_id] +
@@ -153,8 +177,8 @@ def _resolve_positions(
             key=lambda x: x[0].start,
         )
 
-        # Track settled position through time
         settled_x, settled_y = state.x, state.y
+        active = False
 
         for event, etype in pos_events:
             if isinstance(event, EnterEvent):
@@ -168,7 +192,8 @@ def _resolve_positions(
                         target_x, target_y, event.method, eased)
                     state.opacity = _enter_opacity(event.method, eased)
                     state.scale = _enter_scale(event.method, eased)
-                    return  # Don't process further events for this char
+                    active = True
+                    break
                 elif event.start + event.duration <= t:
                     settled_x, settled_y = target_x, target_y
 
@@ -179,14 +204,13 @@ def _resolve_positions(
                     state.x, state.y = _exit_offset(
                         settled_x, settled_y, event.method, eased)
                     state.opacity = _exit_opacity(event.method, eased)
-                    return
+                    active = True
+                    break
                 elif event.start + event.duration <= t:
                     settled_x, settled_y = state.x, state.y
-                    # character is now invisible, but position tracking continues
 
             elif isinstance(event, MoveEvent):
                 old_x, old_y = settled_x, settled_y
-                # Compute move destination
                 if event.path:
                     dest_x, dest_y = event.path[-1]
                 else:
@@ -201,14 +225,15 @@ def _resolve_positions(
                     else:
                         state.x = old_x + (dest_x - old_x) * eased
                         state.y = old_y + (dest_y - old_y) * eased
-                    return
+                    active = True
+                    break
                 elif event.start + event.duration <= t:
                     settled_x, settled_y = dest_x, dest_y
 
-        # No active event: character at settled position
-        state.x, state.y = settled_x, settled_y
-        state.opacity = 1.0
-        state.scale = 1.0
+        if not active:
+            state.x, state.y = settled_x, settled_y
+            state.opacity = 1.0
+            state.scale = 1.0
 
 
 def _resolve_camera(
@@ -217,17 +242,10 @@ def _resolve_camera(
     char_states: dict[str, CharacterState],
     t: float,
 ) -> None:
-    """Compute camera state at time t by processing camera events chronologically.
-
-    Each camera event specifies which properties to change. Unspecified properties
-    remain at their previous value. During the event duration, specified properties
-    interpolate from the previous state to the target values.
-    """
     for event in camera_events:
         if event.start > t:
             break
 
-        # Compute this event's target values
         target_cx = event.center_x
         target_cy = event.center_y
         target_scale = event.scale
@@ -237,7 +255,6 @@ def _resolve_camera(
             target_cx = char_state.x
             target_cy = char_state.y
 
-        # Values to interpolate FROM
         from_cx = camera.center_x
         from_cy = camera.center_y
         from_scale = camera.scale
@@ -252,10 +269,9 @@ def _resolve_camera(
                 camera.center_y = from_cy + (target_cy - from_cy) * eased
             if target_scale is not None:
                 camera.scale = from_scale + (target_scale - from_scale) * eased
-            return  # Active camera event: done interpolating
+            return
 
         else:
-            # Fully settled: apply target values
             if target_cx is not None:
                 camera.center_x = target_cx
             if target_cy is not None:
@@ -269,7 +285,6 @@ def _resolve_dialogue(
     assets: Assets,
     t: float,
 ) -> SubtitleData | None:
-    """Find active dialogue at time t. Returns resolved SubtitleData or None."""
     active = [e for e in dialogue_events
               if e.start <= t <= e.start + e.duration]
     if not active:
@@ -280,7 +295,6 @@ def _resolve_dialogue(
 
 
 def _hex_to_rgba(hex_color: str) -> tuple[int, int, int, int]:
-    """Convert hex color string to RGBA tuple."""
     h = hex_color.lstrip("#")
     if len(h) == 6:
         return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
@@ -290,7 +304,6 @@ def _hex_to_rgba(hex_color: str) -> tuple[int, int, int, int]:
 
 
 def _dialogue_to_subtitle(event: DialogueEvent) -> SubtitleData:
-    """Convert a DialogueEvent to SubtitleData, resolving spans."""
     outline_color = _hex_to_rgba(event.outline_color)
     default_color = _hex_to_rgba(event.color)
     default_font = event.font or None
@@ -333,12 +346,9 @@ SCREEN_H = 1080
 
 def _enter_offset(target_x: float, target_y: float, method: str, t: float
                   ) -> tuple[float, float]:
-    """Offset from target position during enter animation. t in [0,1]."""
     if method == "fade_in" or method == "pop_in":
         return target_x, target_y
-    # Sliding offsets: character starts offset and moves toward target
-    # Offset is in canvas space (will render correctly with camera zoom)
-    offset = SCREEN_W  # roughly one screen width in canvas coords at scale 1.0
+    offset = SCREEN_W
     oy = SCREEN_H
     if method == "slide_left":
         return target_x - offset + offset * t, target_y
@@ -358,9 +368,7 @@ def _enter_opacity(method: str, t: float) -> float:
 
 
 def _enter_scale(method: str, t: float) -> float:
-    """Scale factor during enter. pop_in: 0->1 with overshoot."""
     if method == "pop_in":
-        # Overshoot: scale peaks at 1.1 then settles to 1.0
         if t < 0.7:
             return t / 0.7 * 1.1
         else:
@@ -370,7 +378,6 @@ def _enter_scale(method: str, t: float) -> float:
 
 def _exit_offset(from_x: float, from_y: float, method: str, t: float
                  ) -> tuple[float, float]:
-    """Offset from starting position during exit animation. t in [0,1]."""
     if method == "fade_out":
         return from_x, from_y
     offset = SCREEN_W
@@ -396,10 +403,6 @@ def _exit_opacity(method: str, t: float) -> float:
 
 def _interpolate_path(waypoints: list[tuple[float, float]], t: float
                       ) -> tuple[float, float]:
-    """Interpolate along piecewise-linear waypoints based on distance.
-
-    t=0: first waypoint, t=1: last waypoint. Equal-distance parameterization.
-    """
     if t <= 0:
         return waypoints[0]
     if t >= 1:

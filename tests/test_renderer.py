@@ -44,7 +44,6 @@ class TestBuildTimeline:
         # Scene 1 (3s) + Scene 2 (3s) - overlap (1s) = 5s
         assert total_duration == 5.0
 
-        # Should have 3 segments: scene1, transition, scene2
         assert len(segments) == 3
 
         # Scene 1: 0.0 to 2.0 (3.0 - 1.0 overlap)
@@ -67,17 +66,12 @@ class TestBuildTimeline:
         assert segments[2]["scene_index"] == 1
 
     def test_scene_time_computation(self):
-        """Scene-local time should be correct after a transition."""
         script = parse_script(FIXTURES / "two_scene.xml")
         items = script.blocks
         _, segments = _build_timeline(items)
 
-        # Scene 2 segment: global_start=3.0, scene_start should be 2.0
-        # (scene 2's t=0 is at global time 2.0 during transition)
         scene2_seg = segments[2]
         assert scene2_seg["scene_start"] == 2.0
-        # At global time 4.0, scene2 local time = 4.0 - 2.0 = 2.0
-        # That's within scene2's 3.0s duration
 
     def test_minimal_single_scene(self):
         script = parse_script(FIXTURES / "minimal.xml")
@@ -90,8 +84,8 @@ class TestBuildTimeline:
 
     def test_no_scenes(self):
         from rawstage.parser.models import Script, Assets
-        script = Script(meta={}, assets=Assets(), blocks=[])
-        total_duration, segments = _build_timeline([])
+        items = []
+        total_duration, segments = _build_timeline(items)
         assert total_duration == 0.0
         assert segments == []
 
@@ -100,9 +94,7 @@ class TestBlendFrames:
     def test_fade_midpoint(self):
         a, b = _make_test_frames()
         result = _blend_frames(a, b, 0.5, "fade")
-        # At midpoint, pixel should be blend of red and blue
         pixel = result.getpixel((CANVAS_W // 2, CANVAS_H // 2))
-        # 50% blend: (127, 0, 127)
         assert abs(pixel[0] - 127) < 5
         assert abs(pixel[2] - 127) < 5
 
@@ -130,7 +122,6 @@ class TestBlendFrames:
     def test_wipe_left(self):
         a, b = _make_test_frames()
         result = _blend_frames(a, b, 0.5, "wipe_left")
-        # Left half should be blue (scene B), right half red (scene A)
         left = result.getpixel((CANVAS_W // 4, CANVAS_H // 2))
         right = result.getpixel((3 * CANVAS_W // 4, CANVAS_H // 2))
         assert left[2] > 250   # blue
@@ -139,7 +130,6 @@ class TestBlendFrames:
     def test_wipe_right(self):
         a, b = _make_test_frames()
         result = _blend_frames(a, b, 0.5, "wipe_right")
-        # Right half should be blue (scene B), left half red (scene A)
         left = result.getpixel((CANVAS_W // 4, CANVAS_H // 2))
         right = result.getpixel((3 * CANVAS_W // 4, CANVAS_H // 2))
         assert left[0] > 250   # red
@@ -153,12 +143,16 @@ class TestBlendFrames:
 
 
 class TestRenderScript:
-    """End-to-end render tests. Require ffmpeg."""
+    """End-to-end render tests. Require ffmpeg + real assets (set RAWSTAGE_ASSETS env var)."""
 
     @pytest.fixture(autouse=True)
-    def _check_ffmpeg(self):
+    def _check_prerequisites(self):
         if shutil.which("ffmpeg") is None:
             pytest.skip("ffmpeg not available")
+        import os
+        assets = os.environ.get("RAWSTAGE_ASSETS", "/tmp/test_assets")
+        if not Path(assets).is_dir():
+            pytest.skip(f"asset dir not found: {assets}. Set RAWSTAGE_ASSETS env var.")
 
     def test_render_single_scene(self, tmp_path):
         script = parse_script(FIXTURES / "sample.xml")
@@ -203,7 +197,6 @@ class TestRenderScript:
             preset="ultrafast",
         )
 
-        # 10 second scene at 12 fps = 120 frames
         expected_frames = math.ceil(10.0 * fps)
         import subprocess
         result = subprocess.run(
@@ -226,6 +219,4 @@ class TestRenderScript:
             keep_frames=True,
         )
 
-        # Temp dir should be printed; we can't easily capture it,
-        # but we can verify the output still works
         assert output.exists()

@@ -1,7 +1,6 @@
 # RawStage
 
-ComicDirector ML v1.0 rendering engine. Parses XML performance instructions and outputs MP4 video by compositing PNG character sprites and backgrounds.
-
+ComicDirector ML v1.0 rendering engine. Parses XML performance instructions and outputs MP4 video by compositing PNG character sprites and facilities in a layered depth system.
 
 ## Install
 
@@ -19,10 +18,36 @@ rawstage frame scene.xml --assets ./assets/ --time 3.0 --output frame.png
 
 # Render a full PNG frame sequence for a scene
 rawstage animate scene.xml --assets ./assets/ --fps 24 --output frames/
+rawstage animate scene.xml --assets ./assets/ --fps 24 --output frames/ --progress
 
 # Render a complete script to MP4
 rawstage render script.xml --assets ./assets/ --output out.mp4 --fps 24
+rawstage render script.xml --assets ./assets/ --output out.mp4 --fps 24 --progress
 ```
+
+## Asset types
+
+| Asset | XML tag | Description |
+|-------|---------|-------------|
+| Character | `<character>` | Animated character with enter/exit/move/expression support |
+| Facility | `<facility>` | Static prop or background element (trees, platforms, sky, etc.) |
+| Expression | `<expression>` | Alternate sprite for a character (bound via `character` attr) |
+| Audio | `<audio>` | Music or sound effect file |
+
+All assets declare `layer` (rendering group, sorted alphabetically) and `z` (depth 0-200 within layer, higher = closer). Backgrounds are just facilities with `layer="background"`.
+
+## Layer & depth model
+
+```
+Layer "background"     z=0   sky, mountains, clouds ── farthest
+Layer "background"     z=50  distant buildings
+Layer "platform"       z=100 characters standing here
+Layer "platform"       z=110 another character
+Layer "front"          z=180 foreground tree ── closest
+Subtitle                             ── always topmost (screen-space)
+```
+
+Layers render in alphabetical order. Within each layer, elements sort by `z` ascending (lower z drawn first = farther from viewer).
 
 ## Supported XML events
 
@@ -84,10 +109,11 @@ Spans are concatenated horizontally with baseline alignment. If no `<span>` chil
 
 ## Key design decisions
 
-- **1920×1080 canvas** with unified coordinate system. Character anchor: bottom-center.
+- **1920x1080 canvas** with unified coordinate system. Character anchor: bottom-center.
 - **Absolute timeline** per scene (starts at 0s). All events use `start` (seconds) + `duration`.
+- **Layer + z-index** rendering: layers sorted alphabetically, z 0-200 within layer.
+- **Facilities** are static props/backgrounds placed per scene via `<initial_facilities>`.
 - **Camera**: viewport defined by `center_x, center_y` + `scale` (1.0 = full canvas).
-- **Character z-sort**: by canvas y (higher = closer). Stable during camera zooms.
 - **Quadratic easing** — half the multiplies of cubic, negligible visual difference.
 - **Write-then-encode** — never holds more than one frame in memory.
 - **No numpy** — Pillow + math covers all needs.

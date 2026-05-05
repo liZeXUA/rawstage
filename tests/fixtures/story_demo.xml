@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<comic_script version="1.0">
+  <meta title="Story Demo" author="AI导演" created="2026-05-05" />
+
+  <assets>
+    <!-- Background facilities: yellow stacked on top of green -->
+    <facility id="bg_green" src="assets/bg_green.png" layer="background" z="0" />
+    <facility id="bg_yellow" src="assets/bg_yellow.png" layer="background" z="5" />
+
+    <!-- Midground facilities: tree on left, ground strip at bottom -->
+    <facility id="tree_left" src="assets/tree_left.png" layer="midground" z="50" />
+    <facility id="ground_strip" src="assets/ground_strip.png" layer="midground" z="55" />
+
+    <!-- Characters on platform layer -->
+    <character id="a" name="A" src="assets/char_a.png" layer="platform" z="100" />
+    <character id="b" name="B" src="assets/char_b.png" layer="platform" z="110" />
+    <character id="hole" name="Hole" src="assets/hole.png" layer="platform" z="105" />
+
+    <!-- B's alternate expression: stretched vertically -->
+    <expression character="b" id="b_long" src="assets/char_b_long.png" />
+  </assets>
+
+  <scene id="1" duration="25.0">
+    <initial_camera center_x="960" center_y="540" scale="1.0" />
+
+    <initial_facilities>
+      <place facility="bg_yellow" x="960" y="300" />
+      <place facility="bg_green" x="960" y="1500" />
+      <place facility="tree_left" x="300" y="800" />
+      <place facility="ground_strip" x="960" y="1400" />
+    </initial_facilities>
+
+    <initial_characters>
+      <place character="a" x="960" y="800" />
+    </initial_characters>
+
+    <timeline>
+      <!-- 1. Camera pans right to reveal B -->
+      <camera center_x="1180" center_y="540" scale="1.0"
+              start="0.0" duration="3.0" easing="ease_in_out" />
+
+      <!-- 2. B enters via fade_in during the pan -->
+      <enter character="b" method="fade_in" start="0.5" duration="1.5"
+             target_x="1400" target_y="800" />
+
+      <!-- 3. A jumps in a small arc (upward parabola) -->
+      <move character="a" start="3.5" duration="0.4"
+            path="960,800;960,600;960,800" easing="ease_in_out" />
+
+      <!-- 4. A says "你好！" -->
+      <dialogue character="a" start="4.2" duration="2.0"
+                text="你好！" />
+
+      <!-- 5. Camera zooms in on B (after A speaks, before B speaks) -->
+      <camera target="b" scale="1.5" start="6.5" duration="1.0"
+              easing="ease_out" />
+
+      <!-- 6. B says "我是超人" (close-up already settled) -->
+      <dialogue character="b" start="7.8" duration="2.0"
+                text="我是超人" />
+
+      <!-- 7. Camera zooms out to wide (after B speaks) -->
+      <camera center_x="960" center_y="540" scale="0.8"
+              start="10.2" duration="1.5" easing="ease_in_out" />
+
+      <!-- 8. B flies in an arc across the sky (wide shot) -->
+      <move character="b" start="12.0" duration="3.0"
+            path="1400,800;1200,300;1400,800" easing="ease_in_out" />
+
+      <!-- 9. A says "我会遁地" (wide shot, both visible) -->
+      <dialogue character="a" start="13.0" duration="2.0"
+                text="我会遁地" />
+
+      <!-- 10. Camera returns to normal -->
+      <camera center_x="960" center_y="540" scale="1.0"
+              start="16.0" duration="1.0" easing="ease_in_out" />
+
+      <!-- 11. Hole appears between A and B -->
+      <enter character="hole" method="pop_in" start="17.5" duration="0.5"
+             target_x="1150" target_y="820" />
+
+      <!-- 12. A jumps into hole (downward parabola) -->
+      <move character="a" start="18.5" duration="1.0"
+            path="960,800;1055,700;1150,820" easing="ease_in" />
+
+      <!-- 13. A sinks into ground and disappears -->
+      <exit character="a" method="slide_down" start="20.0" duration="1.5" />
+
+      <!-- 14. B transforms to long version -->
+      <expression character="b" set="b_long" start="22.0" />
+
+      <!-- 15. B moves right, camera follows -->
+      <move character="b" start="22.5" duration="2.0"
+            to_x="1700" to_y="800" easing="ease_in_out" />
+      <camera target="b" start="22.5" duration="2.0" easing="ease_in_out" />
+    </timeline>
+  </scene>
+</comic_script>

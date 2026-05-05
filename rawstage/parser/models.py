@@ -8,6 +8,8 @@ class CharacterAsset:
     id: str
     name: str
     src: str
+    layer: str = "platform"
+    z: int = 100
 
 
 @dataclass(slots=True)
@@ -18,9 +20,11 @@ class ExpressionAsset:
 
 
 @dataclass(slots=True)
-class BackgroundAsset:
+class FacilityAsset:
     id: str
     src: str
+    layer: str = "midground"
+    z: int = 50
 
 
 @dataclass(slots=True)
@@ -33,7 +37,7 @@ class AudioAsset:
 class Assets:
     characters: dict[str, CharacterAsset] = field(default_factory=dict)
     expressions: dict[str, ExpressionAsset] = field(default_factory=dict)
-    backgrounds: dict[str, BackgroundAsset] = field(default_factory=dict)
+    facilities: dict[str, FacilityAsset] = field(default_factory=dict)
     audios: dict[str, AudioAsset] = field(default_factory=dict)
 
 
@@ -48,9 +52,10 @@ class InitialCamera:
 
 @dataclass(slots=True)
 class Place:
-    character: str
-    x: float
-    y: float
+    character: str = ""
+    facility: str = ""
+    x: float = 0.0
+    y: float = 0.0
 
 
 # ---- Event types ----
@@ -136,10 +141,10 @@ class AudioEvent(TimelineEvent):
 @dataclass(slots=True)
 class Scene:
     id: str
-    background: str
     duration: float
     initial_camera: InitialCamera
     initial_characters: list[Place]
+    initial_facilities: list[Place]
     events: list[TimelineEvent]
 
 
@@ -174,6 +179,18 @@ class CharacterState:
     opacity: float = 1.0
     scale: float = 1.0
     sprite_key: str = ""
+    layer: str = "platform"
+    z: int = 100
+
+
+@dataclass(slots=True)
+class FacilityState:
+    facility_id: str
+    x: float = 0.0
+    y: float = 0.0
+    sprite_key: str = ""
+    layer: str = "midground"
+    z: int = 50
 
 
 @dataclass(slots=True)
@@ -200,4 +217,5 @@ class SubtitleData:
 class FrameState:
     camera: CameraState = field(default_factory=CameraState)
     characters: dict[str, CharacterState] = field(default_factory=dict)
+    facilities: dict[str, FacilityState] = field(default_factory=dict)
     subtitle: SubtitleData | None = None

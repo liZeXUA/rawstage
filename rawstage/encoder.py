@@ -1,8 +1,11 @@
-"""ffmpeg video encoding from PNG frame sequences."""
+"""ffmpeg video encoding — file-based and pipe-based."""
 
 import subprocess
 import shutil
 from pathlib import Path
+from collections.abc import Iterator
+
+from PIL import Image
 
 from rawstage.errors import RawStageError
 
@@ -125,3 +128,81 @@ def _build_audio_filter(
     streams.append(f"{mix_inputs}amix=inputs={len(audio_inputs)}:duration=longest[audio_out]")
 
     return ';'.join(streams)
+
+
+def encode_video_pipe(
+    output_path: Path,
+    fps: int,
+    total_frames: int,
+    canvas_w: int,
+    canvas_h: int,
+    preset: str,
+    audio_inputs: list[tuple[Path, float, float, bool, float]] | None,
+    frame_iter: Iterator[Image.Image],
+) -> None:
+    """Encode frames to MP4 by piping raw RGB to ffmpeg stdin.
+
+    Eliminates intermediate PNG files entirely — frames are converted
+    to raw RGB bytes and written directly to ffmpeg's stdin pipe.
+    """
+    ffmpeg = find_ffmpeg()
+
+    cmd = [
+        ffmpeg, "-y",
+        "-f", "rawvideo",
+        "-pixel_format", "rgb24",
+        "-video_size", f"{canvas_w}x{canvas_h}",
+        "-framerate", str(fps),
+        "-i", "pipe:0",
+    ]
+
+    audio_streams = ""
+    if audio_inputs:
+        audio_streams = _build_audio_filter(cmd, audio_inputs, fps, total_frames)
+        cmd.extend([
+            "-c:v", "libx264",
+            "-preset", preset,
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-filter_complex", audio_streams,
+            "-map", "0:v:0",
+            "-map", "[audio_out]",
+            "-shortest",
+        ])
+    else:
+        cmd.extend([
+            "-c:v", "libx264",
+            "-preset", preset,
+            "-pix_fmt", "yuv420p",
+        ])
+
+    cmd.append(str(output_path))
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        raise EncoderError(f"ffmpeg not found at '{ffmpeg}'")
+
+    frames_written = 0
+    try:
+        for frame in frame_iter:
+            proc.stdin.write(frame.convert("RGB").tobytes())
+            frames_written += 1
+        proc.stdin.close()
+    except BrokenPipeError:
+        proc.stdin.close()
+        stderr_text = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
+        raise EncoderError(
+            f"ffmpeg pipe broken after {frames_written} frames:\n{stderr_text[-500:]}")
+
+    retcode = proc.wait()
+    if retcode != 0:
+        stderr_text = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
+        raise EncoderError(
+            f"ffmpeg failed (exit {retcode}):\n{stderr_text[-500:]}")
