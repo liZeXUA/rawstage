@@ -3,7 +3,7 @@ import pytest
 from rawstage.parser import parse_script
 from rawstage.errors import ParseError
 from rawstage.parser.models import (
-    Script, Scene, Transition, EnterEvent, MoveEvent, CameraEvent,
+    Script, Scene, Transition, EnterEvent, MoveEvent, RotateEvent, CameraEvent,
     DialogueEvent, ExpressionEvent, ExitEvent, AudioEvent, DialogueSpan,
 )
 
@@ -149,3 +149,191 @@ def test_character_layer_z():
     assert alice.z == 100
     bob = script.assets.characters["bob"]
     assert bob.z == 110
+
+
+def test_parse_facility_move():
+    script = parse_script(FIXTURES / "facility_move.xml")
+    scene = script.blocks[0]
+    moves = [e for e in scene.events if isinstance(e, MoveEvent)]
+    # First move: facility linear move
+    fm = [m for m in moves if m.facility == "tree_left"]
+    assert len(fm) == 2
+    assert fm[0].character == ""
+    assert fm[0].to_x == 900
+    assert fm[0].to_y == 300
+    assert fm[0].easing == "linear"
+    # Second: facility path move
+    assert fm[1].path is not None
+    assert len(fm[1].path) == 3
+    assert fm[1].path[0] == (900, 300)
+
+
+def test_move_mutual_exclusive():
+    """move with both character and facility should raise ParseError."""
+    from lxml import etree
+    raw = """<?xml version="1.0"?>
+    <comic_script version="1.0">
+      <assets>
+        <character id="a" src="x.png" layer="platform" z="100" />
+        <facility id="f" src="x.png" layer="midground" z="50" />
+      </assets>
+      <scene id="1" duration="5">
+        <initial_camera />
+        <initial_characters />
+        <initial_facilities />
+        <timeline>
+          <move character="a" facility="f" to_x="100" start="0" duration="2" />
+        </timeline>
+      </scene>
+    </comic_script>"""
+    from pathlib import Path
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as f:
+        f.write(raw)
+        tmp = Path(f.name)
+    try:
+        with pytest.raises(ParseError, match="both character and facility"):
+            parse_script(tmp)
+    finally:
+        tmp.unlink()
+
+
+class TestRotateParser:
+    """Tests for <rotate> event parsing."""
+
+    def test_parse_rotate_character(self):
+        script = parse_script(FIXTURES / "facility_move.xml")
+        scene = script.blocks[0]
+        rotates = [e for e in scene.events if isinstance(e, RotateEvent)]
+        rc = [r for r in rotates if r.character == "b"]
+        assert len(rc) == 1
+        assert rc[0].to_angle == 360
+        assert rc[0].easing == "linear"
+        assert rc[0].start == 1.0
+        assert rc[0].duration == 2.0
+
+    def test_parse_rotate_facility(self):
+        script = parse_script(FIXTURES / "facility_move.xml")
+        scene = script.blocks[0]
+        rotates = [e for e in scene.events if isinstance(e, RotateEvent)]
+        rf = [r for r in rotates if r.facility == "tree_left"]
+        assert len(rf) == 1
+        assert rf[0].to_angle == 90
+        assert rf[0].anchor_character == "b"
+        assert rf[0].easing == "ease_in_out"
+
+    def test_rotate_with_fixed_anchor(self):
+        raw = """<?xml version="1.0"?>
+        <comic_script version="1.0">
+          <assets>
+            <character id="a" src="x.png" layer="platform" z="100" />
+          </assets>
+          <scene id="1" duration="5">
+            <initial_camera />
+            <initial_characters />
+            <initial_facilities />
+            <timeline>
+              <rotate character="a" to_angle="180"
+                      anchor_x="960" anchor_y="540"
+                      start="1.0" duration="2.0" />
+            </timeline>
+          </scene>
+        </comic_script>"""
+        import tempfile
+        from pathlib import Path
+        with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as f:
+            f.write(raw)
+            tmp = Path(f.name)
+        try:
+            script = parse_script(tmp)
+            event = script.blocks[0].events[0]
+            assert isinstance(event, RotateEvent)
+            assert event.anchor_x == 960.0
+            assert event.anchor_y == 540.0
+            assert event.anchor_character == ""
+            assert event.anchor_facility == ""
+        finally:
+            tmp.unlink()
+
+    def test_rotate_mutual_exclusive(self):
+        """rotate with both character and facility should raise ParseError."""
+        raw = """<?xml version="1.0"?>
+        <comic_script version="1.0">
+          <assets>
+            <character id="a" src="x.png" layer="platform" z="100" />
+            <facility id="f" src="x.png" layer="midground" z="50" />
+          </assets>
+          <scene id="1" duration="5">
+            <initial_camera />
+            <initial_characters />
+            <initial_facilities />
+            <timeline>
+              <rotate character="a" facility="f" to_angle="90" start="0" duration="2" />
+            </timeline>
+          </scene>
+        </comic_script>"""
+        import tempfile
+        from pathlib import Path
+        with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as f:
+            f.write(raw)
+            tmp = Path(f.name)
+        try:
+            with pytest.raises(ParseError, match="both character and facility"):
+                parse_script(tmp)
+        finally:
+            tmp.unlink()
+
+    def test_rotate_missing_to_angle(self):
+        raw = """<?xml version="1.0"?>
+        <comic_script version="1.0">
+          <assets>
+            <character id="a" src="x.png" layer="platform" z="100" />
+          </assets>
+          <scene id="1" duration="5">
+            <initial_camera />
+            <initial_characters />
+            <initial_facilities />
+            <timeline>
+              <rotate character="a" start="0" duration="2" />
+            </timeline>
+          </scene>
+        </comic_script>"""
+        import tempfile
+        from pathlib import Path
+        with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as f:
+            f.write(raw)
+            tmp = Path(f.name)
+        try:
+            with pytest.raises(ParseError, match="to_angle"):
+                parse_script(tmp)
+        finally:
+            tmp.unlink()
+
+    def test_rotate_mixed_anchor(self):
+        """Cannot mix fixed anchor coords with entity-bound anchor."""
+        raw = """<?xml version="1.0"?>
+        <comic_script version="1.0">
+          <assets>
+            <character id="a" src="x.png" layer="platform" z="100" />
+            <character id="b" src="x.png" layer="platform" z="110" />
+          </assets>
+          <scene id="1" duration="5">
+            <initial_camera />
+            <initial_characters />
+            <initial_facilities />
+            <timeline>
+              <rotate character="a" to_angle="90" start="0" duration="2"
+                      anchor_x="100" anchor_character="b" />
+            </timeline>
+          </scene>
+        </comic_script>"""
+        import tempfile
+        from pathlib import Path
+        with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as f:
+            f.write(raw)
+            tmp = Path(f.name)
+        try:
+            with pytest.raises(ParseError, match="cannot mix"):
+                parse_script(tmp)
+        finally:
+            tmp.unlink()

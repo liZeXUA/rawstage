@@ -1,4 +1,5 @@
 from pathlib import Path
+import pytest
 from rawstage.parser import parse_script
 from rawstage.engine.timeline import evaluate_timeline
 
@@ -176,3 +177,111 @@ def test_rich_text_plain_backward_compat():
     assert state.subtitle.spans[0].text == "普通的白色字幕"
     assert state.subtitle.spans[0].color == (255, 255, 255, 255)
     assert state.subtitle.spans[0].font_size == 40
+
+
+# ---- Facility move tests ----
+
+def test_facility_move_to():
+    script = parse_script(FIXTURES / "facility_move.xml")
+    scene = script.blocks[0]
+
+    # t=0: facility at initial position
+    state0 = evaluate_timeline(scene, script.assets, 0.0)
+    assert state0.facilities["tree_left"].x == 300
+    assert state0.facilities["tree_left"].y == 800
+
+    # t=2.0: facility halfway through move (0→4s, linear, 50% progress)
+    state = evaluate_timeline(scene, script.assets, 2.0)
+    assert state.facilities["tree_left"].x == 600  # 300 + (900-300)*0.5
+    assert state.facilities["tree_left"].y == 550  # 800 + (300-800)*0.5
+
+    # t=5.0: move completed, settled at target
+    state_end = evaluate_timeline(scene, script.assets, 5.0)
+    assert state_end.facilities["tree_left"].x == 900
+    assert state_end.facilities["tree_left"].y == 300
+
+
+def test_facility_move_path():
+    script = parse_script(FIXTURES / "facility_move.xml")
+    scene = script.blocks[0]
+
+    # t=6.5: path move at 50% (5.0→8.0, t=6.5 = 50% progress)
+    # Path: (900,300) → (600,600) → (300,300)
+    # Segment lengths: seg1=424.3, seg2=424.3, total=848.5
+    # At 50%: end of seg1, at (600, 600)
+    state = evaluate_timeline(scene, script.assets, 6.5)
+    # ease_in_out at 50% gives 0.5, so exactly at the midpoint of path
+    assert abs(state.facilities["tree_left"].x - 600) < 1
+    assert abs(state.facilities["tree_left"].y - 600) < 1
+
+    # t=8.0: move completed, settled at last waypoint
+    state_end = evaluate_timeline(scene, script.assets, 8.0)
+    assert state_end.facilities["tree_left"].x == 300
+    assert state_end.facilities["tree_left"].y == 300
+
+
+# ---- Rotation tests ----
+
+def test_rotate_interpolation():
+    """Angle interpolation at event midpoint."""
+    script = parse_script(FIXTURES / "facility_move.xml")
+    scene = script.blocks[0]
+
+    # char b rotate: start=1.0, duration=2.0, to_angle=360, linear
+    # t=2.0 = 50% progress, linear → 180°
+    state = evaluate_timeline(scene, script.assets, 2.0)
+    assert state.characters["b"].angle == 180.0
+
+
+def test_rotate_settled():
+    """Angle settled at to_angle after event completes."""
+    script = parse_script(FIXTURES / "facility_move.xml")
+    scene = script.blocks[0]
+
+    # char b rotate: 1.0-3.0, to 360°
+    # t=4.0: event completed, angle should be 360°
+    state = evaluate_timeline(scene, script.assets, 4.0)
+    assert state.characters["b"].angle == 360.0
+
+
+def test_rotate_facility_anchor():
+    """Facility rotate with anchor_character sets correct anchor fields."""
+    script = parse_script(FIXTURES / "facility_move.xml")
+    scene = script.blocks[0]
+
+    # tree_left rotate: anchor_character="b", start=1.0, duration=3.0, to_angle=90, ease_in_out
+    # t=2.0: progress=(2-1)/3=1/3, ease_in_out(1/3)=2*(1/9)=0.222, angle=90*0.222=20°
+    state = evaluate_timeline(scene, script.assets, 2.0)
+    fac = state.facilities["tree_left"]
+    assert fac.angle == pytest.approx(20.0, abs=0.5)
+    assert fac.anchor_character == "b"
+
+
+def test_rotate_move_parallel():
+    """Rotation and movement happen simultaneously and independently."""
+    script = parse_script(FIXTURES / "facility_move.xml")
+    scene = script.blocks[0]
+
+    # t=4.0:
+    # - char b rotate (1.0-3.0) completed → angle=360
+    # - char b move (3.0-5.0) at 50% → ease_in_out(0.5)=0.5, x=1250, y=700
+    state = evaluate_timeline(scene, script.assets, 4.0)
+    assert state.characters["b"].angle == 360.0
+    assert state.characters["b"].x == 1250.0
+    assert state.characters["b"].y == 700.0
+
+
+def test_rotate_default_anchor():
+    """Default anchor is entity's own center (anchor fields empty)."""
+    script = parse_script(FIXTURES / "facility_move.xml")
+    scene = script.blocks[0]
+
+    # char b rotate: no anchor specified → should default to None/empty
+    state = evaluate_timeline(scene, script.assets, 2.0)
+    char_b = state.characters["b"]
+    assert char_b.anchor_x is None
+    assert char_b.anchor_y is None
+    assert char_b.anchor_character == ""
+    assert char_b.anchor_facility == ""
+
+

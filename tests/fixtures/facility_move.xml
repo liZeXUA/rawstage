@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<comic_script version="1.0">
+  <meta title="Facility Move Test" author="AI导演" />
+
+  <assets>
+    <facility id="bg_green" src="assets/bg_green.png" layer="background" z="0" />
+    <facility id="tree_left" src="assets/tree_left.png" layer="midground" z="50" />
+    <facility id="ground_strip" src="assets/ground_strip.png" layer="midground" z="55" />
+
+    <character id="a" name="A" src="assets/char_a.png" layer="platform" z="100" />
+    <character id="b" name="B" src="assets/char_b.png" layer="platform" z="110" />
+  </assets>
+
+  <scene id="1" duration="12.0">
+    <initial_camera center_x="960" center_y="540" scale="1.0" />
+
+    <initial_facilities>
+      <place facility="bg_green" x="960" y="540" />
+      <place facility="tree_left" x="300" y="800" />
+      <place facility="ground_strip" x="960" y="1400" />
+    </initial_facilities>
+
+    <initial_characters>
+      <place character="a" x="400" y="800" />
+      <place character="b" x="1400" y="800" />
+    </initial_characters>
+
+    <timeline>
+      <!-- Facility linear move -->
+      <move facility="tree_left" start="0.0" duration="4.0"
+            to_x="900" to_y="300" easing="linear" />
+
+      <!-- Facility path move: zigzag -->
+      <move facility="tree_left" start="5.0" duration="3.0"
+            path="900,300;600,600;300,300" easing="ease_in_out" />
+
+      <!-- Character move -->
+      <move character="b" to_x="1100" to_y="600" start="3.0" duration="2.0"
+            easing="ease_in_out" />
+
+      <!-- Character self-rotation -->
+      <rotate character="b" to_angle="360" start="1.0" duration="2.0"
+              easing="linear" />
+
+      <!-- Facility rotating around character b -->
+      <rotate facility="tree_left" to_angle="90"
+              anchor_character="b" start="1.0" duration="3.0"
+              easing="ease_in_out" />
+    </timeline>
+  </scene>
+</comic_script>

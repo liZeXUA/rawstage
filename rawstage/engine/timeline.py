@@ -2,7 +2,8 @@ from math import hypot
 
 from rawstage.parser.models import (
     Scene, Assets, FrameState, CameraState, CharacterState, FacilityState,
-    EnterEvent, ExitEvent, MoveEvent, CameraEvent, DialogueEvent, ExpressionEvent,
+    EnterEvent, ExitEvent, MoveEvent, RotateEvent, CameraEvent, DialogueEvent,
+    ExpressionEvent, EnterHoleEvent, HoleState,
     SubtitleData, SubtitleSpan, DialogueSpan,
 )
 from rawstage.engine.easing import EASING_MAP
@@ -14,8 +15,9 @@ def evaluate_timeline(scene: Scene, assets: Assets, t: float) -> FrameState:
     Resolution order (no circular deps):
     1. Character sprite keys (expressions are instantaneous, canvas-independent)
     2. Character visibility + canvas positions (enter/exit/move, all canvas-space)
-    3. Camera (may reference character canvas positions)
-    4. Subtitle (screen-space, independent of camera)
+    3. Hole state (enter_hole events + passive detection, depends on positions)
+    4. Camera (may reference character canvas positions)
+    5. Subtitle (screen-space, independent of camera)
     """
     camera = CameraState(
         center_x=scene.initial_camera.center_x,
@@ -63,6 +65,12 @@ def evaluate_timeline(scene: Scene, assets: Assets, t: float) -> FrameState:
     camera_events = [e for e in scene.events if isinstance(e, CameraEvent)]
     dialogue_events = [e for e in scene.events if isinstance(e, DialogueEvent)]
     expression_events = [e for e in scene.events if isinstance(e, ExpressionEvent)]
+    enter_hole_events = [e for e in scene.events if isinstance(e, EnterHoleEvent)]
+    rotate_events = [e for e in scene.events if isinstance(e, RotateEvent)]
+
+    # Split move events by target type
+    char_moves = [e for e in move_events if e.character]
+    fac_moves = [e for e in move_events if e.facility]
 
     # --- 1. Expressions: most recent completed event changes sprite ---
     for event in expression_events:
@@ -76,23 +84,34 @@ def evaluate_timeline(scene: Scene, assets: Assets, t: float) -> FrameState:
                     character_id=char_id, sprite_key=char_id, layer=layer, z=z_val)
             char_states[char_id].sprite_key = event.set
 
-    # --- 2. Visibility + Position ---
+    # --- 2. Visibility + Position (characters) ---
     _resolve_visibility(char_states, enter_events, exit_events, t, assets)
-    _resolve_positions(char_states, move_events, enter_events, exit_events, t)
+    _resolve_positions(char_states, char_moves, enter_events, exit_events, t)
 
     # Remove invisible characters
     visible_chars = {k: v for k, v in char_states.items() if v.visible}
 
-    # --- 3. Camera ---
+    # --- 2.5. Facility positions ---
+    _resolve_facility_positions(fac_states, fac_moves, t)
+
+    # --- 2.6. Rotation ---
+    _resolve_rotations(char_states, fac_states, rotate_events, t)
+
+    # --- 3. Hole state ---
+    hole_states = _resolve_holes(scene, char_states, enter_hole_events, t)
+
+    # --- 4. Camera ---
     _resolve_camera(camera, camera_events, visible_chars, t)
 
-    # --- 4. Dialogue ---
+    # --- 5. Dialogue ---
     subtitle = _resolve_dialogue(dialogue_events, assets, t)
 
     return FrameState(
         camera=camera,
         characters=visible_chars,
         facilities=fac_states,
+        holes=scene.holes,
+        hole_states=hole_states,
         subtitle=subtitle,
     )
 
@@ -234,6 +253,133 @@ def _resolve_positions(
             state.x, state.y = settled_x, settled_y
             state.opacity = 1.0
             state.scale = 1.0
+
+
+def _resolve_rotations(
+    char_states: dict[str, CharacterState],
+    fac_states: dict[str, FacilityState],
+    rotate_events: list[RotateEvent],
+    t: float,
+) -> None:
+    """Compute rotation angle and anchor for each entity at time t.
+
+    State machine per entity (same logic for char and facility):
+    - No rotate event yet: angle stays at initial (0)
+    - Active event: easing interpolation from settled_angle to to_angle
+    - Completed event: settle at to_angle
+    - Instant (duration=0): snap to to_angle
+    """
+    # Build combined entity list: (id, state, is_char)
+    entities: list[tuple[str, CharacterState | FacilityState, bool]] = []
+    for cid, cs in char_states.items():
+        entities.append((cid, cs, True))
+    for fid, fs in fac_states.items():
+        entities.append((fid, fs, False))
+
+    for entity_id, state, is_char in entities:
+        my_events = sorted(
+            [e for e in rotate_events
+             if (is_char and e.character == entity_id)
+             or (not is_char and e.facility == entity_id)],
+            key=lambda e: e.start,
+        )
+
+        settled_angle = state.angle
+        active = False
+        last_completed: RotateEvent | None = None
+
+        for event in my_events:
+            if event.start <= t < event.start + event.duration:
+                if event.duration > 0:
+                    progress = (t - event.start) / event.duration
+                    eased = EASING_MAP[event.easing](progress)
+                    state.angle = settled_angle + (event.to_angle - settled_angle) * eased
+                else:
+                    state.angle = event.to_angle
+                _copy_anchor(state, event)
+                active = True
+                break
+            elif event.start + event.duration <= t:
+                settled_angle = event.to_angle
+                last_completed = event
+
+        if not active:
+            state.angle = settled_angle
+            if last_completed is not None:
+                _copy_anchor(state, last_completed)
+            # else: keep existing angle/anchor (defaults from initial state)
+
+
+def _copy_anchor(state: CharacterState | FacilityState, event: RotateEvent) -> None:
+    state.anchor_x = event.anchor_x
+    state.anchor_y = event.anchor_y
+    state.anchor_character = event.anchor_character
+    state.anchor_facility = event.anchor_facility
+
+
+def _resolve_holes(
+    scene: Scene,
+    char_states: dict[str, CharacterState],
+    enter_hole_events: list[EnterHoleEvent],
+    t: float,
+) -> dict[tuple[str, str], HoleState]:
+    """Resolve hole states: active enter_hole events + passive detection.
+
+    Compound key (character_id, hole_id) handles multiple chars per hole
+    and one char spanning multiple holes without collision.
+
+    enter_hole event only drives depth_ratio — character position is
+    controlled separately by move/enter events.
+
+    Pairs with an enter_hole event (even if not yet started) are excluded
+    from passive detection to prevent depth_ratio discontinuities at the
+    event start time.
+    """
+    hole_map = {h.id: h for h in scene.holes}
+    result: dict[tuple[str, str], HoleState] = {}
+
+    # Pre-compute all (char, hole) pairs that have an enter_hole event,
+    # to skip passive detection for them regardless of event timing.
+    event_pairs: set[tuple[str, str]] = set()
+    for event in enter_hole_events:
+        event_pairs.add((event.character, event.hole))
+
+    # --- Active enter_hole events: depth_ratio from event progress ---
+    for event in enter_hole_events:
+        hole = hole_map.get(event.hole)
+        if hole is None:
+            continue
+        if event.start <= t:
+            progress = min((t - event.start) / max(event.duration, 0.001), 1.0)
+            result[(event.character, event.hole)] = HoleState(
+                character_id=event.character,
+                hole_id=event.hole,
+                depth_ratio=progress,
+            )
+
+    # --- Passive detection: char anchor falls in hole rect ---
+    # Skip pairs that have an enter_hole event to avoid depth_ratio jumps.
+    for hole in scene.holes:
+        for char_id, char_state in char_states.items():
+            key = (char_id, hole.id)
+            if key in result:
+                continue
+            if key in event_pairs:
+                continue
+
+            hw, hh = hole.width / 2, hole.height / 2
+            if (hole.x - hw <= char_state.x <= hole.x + hw and
+                    hole.y - hh <= char_state.y <= hole.y + hh):
+                depth_ratio = (char_state.y - (hole.y - hh)) / max(hole.height, 0.001)
+                depth_ratio = max(0.0, min(1.0, depth_ratio))
+                if depth_ratio > hole.depth_start:
+                    result[key] = HoleState(
+                        character_id=char_id,
+                        hole_id=hole.id,
+                        depth_ratio=depth_ratio,
+                    )
+
+    return result
 
 
 def _resolve_camera(
@@ -424,3 +570,49 @@ def _interpolate_path(waypoints: list[tuple[float, float]], t: float
         accumulated += seg_len
 
     return waypoints[-1]
+
+
+def _resolve_facility_positions(
+    fac_states: dict[str, FacilityState],
+    fac_moves: list[MoveEvent],
+    t: float,
+) -> None:
+    """Compute canvas position for facilities at time t.
+
+    Simpler than character positions: no enter/exit state machine,
+    just interpolate active move event or settle at last target.
+    """
+    for fac_id, state in fac_states.items():
+        my_moves = sorted(
+            [e for e in fac_moves if e.facility == fac_id],
+            key=lambda e: e.start,
+        )
+
+        settled_x, settled_y = state.x, state.y
+        active = False
+
+        for event in my_moves:
+            old_x, old_y = settled_x, settled_y
+            if event.path:
+                dest_x, dest_y = event.path[-1]
+            else:
+                dest_x = event.to_x if event.to_x is not None else settled_x
+                dest_y = event.to_y if event.to_y is not None else settled_y
+
+            if event.start <= t < event.start + event.duration:
+                progress = (t - event.start) / max(event.duration, 0.001)
+                eased = EASING_MAP[event.easing](progress)
+                if event.path:
+                    state.x, state.y = _interpolate_path(event.path, eased)
+                else:
+                    state.x = old_x + (dest_x - old_x) * eased
+                    state.y = old_y + (dest_y - old_y) * eased
+                active = True
+                break
+            elif event.start + event.duration <= t:
+                settled_x, settled_y = dest_x, dest_y
+
+        if not active:
+            state.x, state.y = settled_x, settled_y
+
+

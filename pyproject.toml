@@ -1,6 +1,6 @@
 [project]
 name = "rawstage"
-version = "0.2.0"
+version = "0.3.0"
 description = "Raw-style comic stage renderer — parses ComicDirector ML XML and outputs video"
 authors = [
     {name = "liZeXUA", email = "flffake@lizexua.com"},

@@ -58,6 +58,20 @@ class Place:
     y: float = 0.0
 
 
+@dataclass(slots=True)
+class Hole:
+    id: str
+    x: float
+    y: float
+    width: float
+    height: float
+    sample_facility: str
+    cover_height: float = 60.0
+    depth_start: float = 0.0
+    depth_end: float = 1.0
+    visual_facility: str = ""
+
+
 # ---- Event types ----
 
 @dataclass(slots=True)
@@ -82,11 +96,24 @@ class ExitEvent(TimelineEvent):
 
 @dataclass(slots=True)
 class MoveEvent(TimelineEvent):
-    character: str
+    character: str = ""
+    facility: str = ""
     to_x: float | None = None
     to_y: float | None = None
     path: list[tuple[float, float]] | None = None
     easing: str = "linear"
+
+
+@dataclass(slots=True)
+class RotateEvent(TimelineEvent):
+    character: str = ""
+    facility: str = ""
+    to_angle: float = 0.0
+    easing: str = "linear"
+    anchor_x: float | None = None
+    anchor_y: float | None = None
+    anchor_character: str = ""
+    anchor_facility: str = ""
 
 
 @dataclass(slots=True)
@@ -129,6 +156,12 @@ class ExpressionEvent(TimelineEvent):
 
 
 @dataclass(slots=True)
+class EnterHoleEvent(TimelineEvent):
+    character: str
+    hole: str
+
+
+@dataclass(slots=True)
 class AudioEvent(TimelineEvent):
     ref: str
     action: str  # play, play_once
@@ -145,6 +178,7 @@ class Scene:
     initial_camera: InitialCamera
     initial_characters: list[Place]
     initial_facilities: list[Place]
+    holes: list[Hole]
     events: list[TimelineEvent]
 
 
@@ -181,6 +215,11 @@ class CharacterState:
     sprite_key: str = ""
     layer: str = "platform"
     z: int = 100
+    angle: float = 0.0
+    anchor_x: float | None = None
+    anchor_y: float | None = None
+    anchor_character: str = ""
+    anchor_facility: str = ""
 
 
 @dataclass(slots=True)
@@ -191,6 +230,11 @@ class FacilityState:
     sprite_key: str = ""
     layer: str = "midground"
     z: int = 50
+    angle: float = 0.0
+    anchor_x: float | None = None
+    anchor_y: float | None = None
+    anchor_character: str = ""
+    anchor_facility: str = ""
 
 
 @dataclass(slots=True)
@@ -214,8 +258,17 @@ class SubtitleData:
 
 
 @dataclass(slots=True)
+class HoleState:
+    character_id: str
+    hole_id: str
+    depth_ratio: float = 0.0
+
+
+@dataclass(slots=True)
 class FrameState:
     camera: CameraState = field(default_factory=CameraState)
     characters: dict[str, CharacterState] = field(default_factory=dict)
     facilities: dict[str, FacilityState] = field(default_factory=dict)
+    holes: list[Hole] = field(default_factory=list)
+    hole_states: dict[tuple[str, str], HoleState] = field(default_factory=dict)
     subtitle: SubtitleData | None = None

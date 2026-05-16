@@ -114,6 +114,11 @@
     <place facility="sky" x="960" y="540" />
     <place facility="tree" x="200" y="700" />
   </initial_facilities>
+  <!-- 可选：洞口定义 -->
+  <holes>
+    <hole id="hole_cave" x="800" y="900" width="140" height="40"
+          sample_facility="cave_ground" cover_height="80" />
+  </holes>
   <initial_characters>
     <place character="alice" x="300" y="800" />
   </initial_characters>
@@ -152,7 +157,34 @@
 
 ---
 
-### 2.6 渲染层级与深度排序
+### 2.6 `<holes>` 洞口定义
+洞是一种场景级空间特效元素，定义画布上的一个检测区域。当角色锚点（脚底）落入该区域时，引擎从背景设施图像中就地采样一块前景遮挡层覆盖在角色上方，模拟角色"进入洞穴/被地面吞没"的视觉效果，**无需额外美术素材**。
+
+```xml
+<holes>
+  <hole id="hole_well" x="800" y="900" width="140" height="40"
+        sample_facility="bg_ground" cover_height="60"
+        depth_start="0.0" depth_end="1.0" />
+</holes>
+```
+| 属性 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
+| `id` | 是 | — | 洞的唯一标识 |
+| `x` / `y` | 是 | — | 洞检测区域中心坐标（画布坐标） |
+| `width` / `height` | 是 | — | 检测区域大小（角色锚点进入此范围即触发遮挡） |
+| `sample_facility` | 是 | — | 用于采样遮挡块的前景/背景设施 ID（必须在 `<assets>` 中声明） |
+| `cover_height` | 否 | `60` | 采样遮挡块的最大高度（像素），应与洞口上方边缘的地面纹理厚度匹配 |
+| `depth_start` | 否 | `0.0` | 遮挡开始的深度阈值（depth_ratio 超过此值才开始绘制遮挡） |
+| `depth_end` | 否 | `1.0` | 完全遮挡的深度阈值（depth_ratio 达到此值时遮挡块达到 cover_height 高度） |
+
+**深度映射**：
+- `depth_ratio` 为角色下沉程度，范围 [0, 1]
+- 实际遮挡块高度 = `cover_height × clamp((depth_ratio - depth_start) / (depth_end - depth_start), 0, 1)`
+- 被动检测时 `depth_ratio = (char.y - hole_top) / hole.height`
+
+---
+
+### 2.7 渲染层级与深度排序
 
 所有可绘制元素（设施 + 角色）按以下规则排序绘制：
 
@@ -163,7 +195,7 @@
 
 ---
 
-### 2.7 时间线事件总览
+### 2.8 时间线事件总览
 所有事件共享 `start` 和 `duration`（单位秒），均位于 `<timeline>` 内。
 
 ---
@@ -201,17 +233,75 @@
 ---
 
 #### 🚶 移动 `<move>`
-支持单目标或路径点（线性插值）。
+支持角色或设施的位移，控制方式可以是单目标或路径点（线性插值）。
+
+**角色移动**（`character` 属性）：
 ```xml
 <move character="alice" start="2.0" duration="1.5"
       to_x="600" to_y="800" easing="ease_in_out" />
 ```
-若需曲线移动，使用 `path` 属性（分号分隔坐标）：
+
+**设施移动**（`facility` 属性）：
+```xml
+<move facility="cloud" start="0.0" duration="10.0"
+      to_x="1200" to_y="300" easing="linear" />
+```
+`character` 和 `facility` 二选一（不可同时指定）。
+
+**路径移动**（角色和设施均支持）：
 ```xml
 <move character="alice" start="2.0" duration="2.0"
       path="300,800;450,700;600,800" easing="linear" />
 ```
-此时 `to_x/to_y` 忽略。`easing` 可选：`linear` / `ease_in` / `ease_out` / `ease_in_out`。
+使用 `path` 时 `to_x/to_y` 被忽略。`easing` 可选：`linear` / `ease_in` / `ease_out` / `ease_in_out`。
+
+设施移动比角色简单：无进出场动画，无可见性管理，仅位置插值。
+
+---
+
+#### 🔄 旋转 `<rotate>`
+控制角色或设施围绕锚点旋转。锚点默认取实体自身的 sprite 中心，也可指定固定坐标或绑定到另一个实体的中心。
+
+```xml
+<!-- 角色原地转圈 -->
+<rotate character="alice" to_angle="360" start="2.0" duration="2.0" easing="ease_in_out" />
+
+<!-- 多圈旋转（to_angle 可超过 360） -->
+<rotate facility="windmill" to_angle="720" start="0.0" duration="5.0" easing="linear" />
+
+<!-- 绕固定画布坐标旋转 -->
+<rotate character="alice" to_angle="180" anchor_x="960" anchor_y="540"
+        start="3.0" duration="1.5" easing="ease_out" />
+
+<!-- 绕另一实体中心旋转（例如：剑绕角色头顶转圈） -->
+<rotate facility="sword" to_angle="720" anchor_character="alice"
+        start="1.0" duration="4.0" easing="linear" />
+
+<!-- 一个角色绕另一个角色旋转 -->
+<rotate character="bob" to_angle="-360" anchor_character="alice"
+        start="2.0" duration="4.0" easing="ease_in_out" />
+```
+
+| 属性 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
+| `character` | 二选一 | — | 旋转目标角色 ID |
+| `facility` | 二选一 | — | 旋转目标设施 ID |
+| `to_angle` | 是 | — | 目标旋转角度（度，正值=逆时针，支持超过 360 的多圈） |
+| `start` | 是 | — | 开始时刻（秒） |
+| `duration` | 是 | `0` | 持续时长（秒，0=瞬时切换） |
+| `easing` | 否 | `linear` | `linear` / `ease_in` / `ease_out` / `ease_in_out` |
+| `anchor_x` | 否 | 实体中心 | 固定锚点 X 坐标（画布坐标） |
+| `anchor_y` | 否 | 实体中心 | 固定锚点 Y 坐标（画布坐标） |
+| `anchor_character` | 否 | — | 锚点绑定到该角色中心（跟随移动） |
+| `anchor_facility` | 否 | — | 锚点绑定到该设施中心（跟随移动） |
+
+**锚点规则**：
+- 未指定任何锚点 → 默认使用旋转目标自身的 sprite 中心
+- 指定 `anchor_x` + `anchor_y` → 使用固定画布坐标
+- 指定 `anchor_character` / `anchor_facility` → 使用该实体的 sprite 中心，且锚点跟随该实体移动
+- 固定坐标和实体绑定不可同时指定
+
+旋转与移动相互独立，可同时进行。
 
 ---
 
@@ -272,6 +362,33 @@
 <expression character="alice" set="alice_angry" start="4.5" />
 ```
 引用 `assets` 中定义的 `expression` ID，立即切换角色立绘为对应表情图片。表情切换为瞬时操作（无 `duration` 属性），一旦 `t >= start` 即生效并保持到场景结束或被后续表情覆盖。
+
+---
+
+#### 🕳️ 角色进入洞 `<enter_hole>`
+```xml
+<!-- 主动驱动：引擎在 duration 内将 depth_ratio 从 0 线性增加到 1 -->
+<enter_hole character="alice" hole="hole_well" start="3.0" duration="2.0" />
+```
+| 属性 | 必填 | 说明 |
+|------|------|------|
+| `character` | 是 | 角色 ID |
+| `hole` | 是 | 引用的 `<hole>` ID |
+| `start` | 是 | 开始时刻（秒） |
+| `duration` | 是 | 下沉过程持续时长（秒），depth_ratio 在此时段内从 0→1 |
+
+**工作机制**：
+- `enter_hole` 事件仅驱动 `depth_ratio`（角色下沉程度），**不改变角色位置**。
+- 角色位置由 `<move>` 或初始放置独立控制，配合 `<enter_hole>` 实现"走入洞中消失"。
+- 也支持被动检测：即使没有 `<enter_hole>` 事件，角色锚点落入洞检测区域时引擎自动计算 depth_ratio 并绘制遮挡。
+
+**典型组合用法**：
+```xml
+<!-- 角色走入洞口位置 -->
+<move character="alice" to_x="800" to_y="900" start="3.0" duration="1.5" easing="ease_in" />
+<!-- 进入洞的深度效果同步启动 -->
+<enter_hole character="alice" hole="hole_well" start="3.0" duration="2.0" />
+```
 
 ---
 
@@ -349,6 +466,10 @@
       <place facility="park" x="960" y="540" />
       <place facility="tree_left" x="150" y="700" />
     </initial_facilities>
+    <holes>
+      <hole id="hole_cave" x="700" y="850" width="200" height="60"
+            sample_facility="park" cover_height="120" />
+    </holes>
     <initial_characters>
       <place character="alice" x="400" y="800" />
     </initial_characters>
@@ -372,9 +493,13 @@
       <move character="alice" start="6.5" duration="1.0"
             to_x="450" to_y="780" easing="linear" />
 
-      <camera center_x="960" center_y="540" scale="1.0" start="8.0" duration="1.5" />
+      <!-- Bob 走入洞穴消失：move 控制位置，enter_hole 驱动遮挡 -->
+      <move character="bob" to_x="700" to_y="850" start="7.0" duration="1.5" easing="ease_in" />
+      <enter_hole character="bob" hole="hole_cave" start="7.0" duration="1.5" />
 
-      <exit character="bob" method="slide_right" start="8.5" duration="0.8" />
+      <camera center_x="960" center_y="540" scale="1.0" start="8.5" duration="1.5" />
+
+      <exit character="alice" method="fade_out" start="9.0" duration="0.8" />
     </timeline>
   </scene>
 

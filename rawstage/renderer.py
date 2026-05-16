@@ -387,6 +387,13 @@ def _load_scene_images(scene: Scene, script: Script, assets_root: Path) -> dict:
         fac_asset = script.assets.facilities[place.facility]
         images[place.facility] = load_image(assets_root / fac_asset.src)
 
+    # Facilities referenced by holes (may not be in initial_facilities)
+    for hole in scene.holes:
+        if hole.sample_facility not in images:
+            fac_asset = script.assets.facilities.get(hole.sample_facility)
+            if fac_asset:
+                images[hole.sample_facility] = load_image(assets_root / fac_asset.src)
+
     # Characters in initial_characters
     for place in scene.initial_characters:
         char_asset = script.assets.characters[place.character]

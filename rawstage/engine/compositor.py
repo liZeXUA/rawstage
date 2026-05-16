@@ -1,3 +1,4 @@
+import math
 from PIL import Image
 
 from rawstage.parser.models import (
@@ -14,12 +15,19 @@ CANVAS_H = 1080
 class _Drawable:
     """Unified drawable for layer/z sorting."""
     __slots__ = ("x", "y", "layer", "z", "opacity", "scale",
-                 "sprite_key", "sprite_width", "sprite_height")
+                 "sprite_key", "sprite_width", "sprite_height",
+                 "angle", "anchor_x", "anchor_y",
+                 "anchor_character", "anchor_facility")
 
     def __init__(self, x: float, y: float, layer: str, z: int,
                  opacity: float = 1.0, scale: float = 1.0,
                  sprite_key: str = "",
-                 sprite_width: int = 0, sprite_height: int = 0):
+                 sprite_width: int = 0, sprite_height: int = 0,
+                 angle: float = 0.0,
+                 anchor_x: float | None = None,
+                 anchor_y: float | None = None,
+                 anchor_character: str = "",
+                 anchor_facility: str = ""):
         self.x = x
         self.y = y
         self.layer = layer
@@ -29,6 +37,11 @@ class _Drawable:
         self.sprite_key = sprite_key
         self.sprite_width = sprite_width
         self.sprite_height = sprite_height
+        self.angle = angle
+        self.anchor_x = anchor_x
+        self.anchor_y = anchor_y
+        self.anchor_character = anchor_character
+        self.anchor_facility = anchor_facility
 
 
 def _pick_filter(sprite: Image.Image) -> int:
@@ -92,6 +105,41 @@ def _paste_cropped(frame: Image.Image, sprite: Image.Image,
         resized if resized.mode == "RGBA" else None)
 
 
+def _resolve_rotation_anchor(
+    d: _Drawable,
+    state: FrameState,
+    sprite: Image.Image,
+    char_images: dict[str, Image.Image],
+    expr_images: dict[str, Image.Image],
+    fac_images: dict[str, Image.Image],
+) -> tuple[float, float]:
+    """Resolve the rotation anchor to canvas coordinates.
+
+    Priority: entity-bound > fixed coords > default (self center).
+    """
+    # Entity-bound anchor
+    if d.anchor_character:
+        anchor_char = state.characters.get(d.anchor_character)
+        if anchor_char:
+            anchor_sprite = _get_sprite(
+                anchor_char.sprite_key, char_images, expr_images)
+            if anchor_sprite:
+                return anchor_char.x, anchor_char.y - anchor_sprite.height / 2
+    if d.anchor_facility:
+        anchor_fac = state.facilities.get(d.anchor_facility)
+        if anchor_fac:
+            anchor_sprite = fac_images.get(anchor_fac.sprite_key)
+            if anchor_sprite:
+                return anchor_fac.x, anchor_fac.y - anchor_sprite.height / 2
+
+    # Fixed canvas coordinates
+    if d.anchor_x is not None and d.anchor_y is not None:
+        return d.anchor_x, d.anchor_y
+
+    # Default: entity's own sprite center
+    return d.x, d.y - sprite.height / 2
+
+
 def composite_frame(char_images: dict[str, Image.Image],
                     expr_images: dict[str, Image.Image],
                     fac_images: dict[str, Image.Image],
@@ -121,6 +169,11 @@ def composite_frame(char_images: dict[str, Image.Image],
             sprite_key=fac_state.sprite_key,
             sprite_width=sprite.width,
             sprite_height=sprite.height,
+            angle=fac_state.angle,
+            anchor_x=fac_state.anchor_x,
+            anchor_y=fac_state.anchor_y,
+            anchor_character=fac_state.anchor_character,
+            anchor_facility=fac_state.anchor_facility,
         ))
 
     # Collect visible characters
@@ -140,6 +193,11 @@ def composite_frame(char_images: dict[str, Image.Image],
             sprite_key=char_state.sprite_key,
             sprite_width=sprite.width,
             sprite_height=sprite.height,
+            angle=char_state.angle,
+            anchor_x=char_state.anchor_x,
+            anchor_y=char_state.anchor_y,
+            anchor_character=char_state.anchor_character,
+            anchor_facility=char_state.anchor_facility,
         ))
 
     # Sort: first by layer name, then by z
@@ -155,7 +213,43 @@ def composite_frame(char_images: dict[str, Image.Image],
             d.x, d.y, state.camera, CANVAS_W, CANVAS_H)
         total_scale = state.camera.scale * d.scale
 
+        if d.angle != 0.0:
+            # Resolve rotation anchor in canvas coordinates
+            anchor_cx, anchor_cy = _resolve_rotation_anchor(
+                d, state, sprite, char_images, expr_images, fac_images)
+
+            # Anchor offset from sprite CENTER (in canvas coords).
+            # PIL rotates around the sprite center by default, so the
+            # offset must be measured from the center, not from feet.
+            center_cy = d.y - sprite.height / 2
+            dx = anchor_cx - d.x
+            dy = anchor_cy - center_cy
+
+            # Rotate sprite around its own center (default PIL behavior).
+            # The original center materializes at the center of the expanded image.
+            theta = math.radians(d.angle)
+            cos_t = math.cos(theta)
+            sin_t = math.sin(theta)
+            sprite = sprite.rotate(d.angle, resample=Image.BICUBIC, expand=True)
+
+            # After rotation, the original anchor offset rotates too
+            rot_dx = dx * cos_t - dy * sin_t
+            rot_dy = dx * sin_t + dy * cos_t
+
+            # Anchor screen position
+            anchor_sx, anchor_sy = canvas_to_screen(
+                anchor_cx, anchor_cy, state.camera, CANVAS_W, CANVAS_H)
+
+            # Virtual bottom-center for _paste_cropped:
+            #   screen_x = paste_x + sprite.width/2*total_scale = anchor_sx - rot_dx*total_scale
+            #   screen_y = paste_y + sprite.height*total_scale = anchor_sy + (sprite.height/2 - rot_dy)*total_scale
+            screen_x = anchor_sx - rot_dx * total_scale
+            screen_y = anchor_sy + (sprite.height / 2 - rot_dy) * total_scale
+
         _paste_cropped(frame, sprite, total_scale, screen_x, screen_y, d.opacity)
+
+    # Hole covers: sample background facility to occlude characters
+    _composite_hole_covers(frame, state, fac_images)
 
     # Subtitle (screen-space, fixed at bottom center, always topmost)
     if state.subtitle:
@@ -165,6 +259,153 @@ def composite_frame(char_images: dict[str, Image.Image],
         frame.paste(sub_img, (sub_x, sub_y), sub_img)
 
     return frame
+
+
+def _composite_hole_covers(
+    frame: Image.Image,
+    state: FrameState,
+    fac_images: dict[str, Image.Image],
+) -> None:
+    """Draw hole cover overlays from sampled background facilities.
+
+    For each active hole state where depth_ratio > depth_start:
+    cover from ground level (hole.y) down to the character's feet,
+    creating a "sinking into ground" visual. depth_ratio only controls
+    cover activation; the cover extent is determined by the character's
+    actual position — as the character descends via move events, more
+    of their body falls below ground and gets occluded.
+    """
+    hole_map = {h.id: h for h in state.holes}
+
+    for key, hs in state.hole_states.items():
+        hole = hole_map.get(hs.hole_id)
+        if hole is None:
+            continue
+        if hs.depth_ratio <= hole.depth_start:
+            continue
+
+        facility_img = fac_images.get(hole.sample_facility)
+        if facility_img is None:
+            continue
+
+        half_w = hole.width / 2
+
+        # Cover from ground level (hole.y) down to character's feet.
+        # The character descends via move events; the cover simply hides
+        # everything below the ground line.
+        char_state = state.characters.get(hs.character_id)
+        char_y = char_state.y if char_state else hole.y
+        cover_bottom = max(hole.y, char_y)
+
+        if cover_bottom <= hole.y:
+            continue  # Character hasn't descended below ground level
+
+        cover_left = hole.x - half_w
+        cover_top = hole.y
+        cover_right = hole.x + half_w
+
+        # Map canvas coords to facility image pixels
+        fac_state = state.facilities.get(hole.sample_facility)
+        if fac_state is None:
+            continue
+        fac_img_w = facility_img.width
+        fac_img_h = facility_img.height
+        fac_canvas_left = fac_state.x - fac_img_w / 2
+        fac_canvas_top = fac_state.y - fac_img_h
+
+        # Source rectangle in facility image space (float)
+        src_left = cover_left - fac_canvas_left
+        src_top = cover_top - fac_canvas_top
+        src_right = cover_right - fac_canvas_left
+        src_bottom = cover_bottom - fac_canvas_top
+
+        # Intersect with image pixel bounds
+        src_left_i = max(0, int(src_left))
+        src_top_i = max(0, int(src_top))
+        src_right_i = min(fac_img_w, max(src_left_i + 1, int(src_right)))
+        src_bottom_i = min(fac_img_h, max(src_top_i + 1, int(src_bottom)))
+
+        if src_left_i >= src_right_i or src_top_i >= src_bottom_i:
+            continue
+
+        cover_img = facility_img.crop(
+            (src_left_i, src_top_i, src_right_i, src_bottom_i))
+
+        # Camera transform: cover rect center-bottom → screen
+        cover_center_x = hole.x
+        cover_anchor_y = cover_bottom  # bottom of cover rect = hole.y
+        screen_x, screen_y = canvas_to_screen(
+            cover_center_x, cover_anchor_y,
+            state.camera, CANVAS_W, CANVAS_H,
+        )
+
+        scale = state.camera.scale
+        paste_w = max(1, int(cover_img.width * scale))
+        paste_h = max(1, int(cover_img.height * scale))
+        paste_x = int(screen_x - paste_w / 2)
+        paste_y = int(screen_y - paste_h)
+
+        # Intersect with frame bounds (same pattern as _paste_cropped)
+        clip_left = max(0, paste_x)
+        clip_top = max(0, paste_y)
+        clip_right = min(CANVAS_W, paste_x + paste_w)
+        clip_bottom = min(CANVAS_H, paste_y + paste_h)
+
+        if clip_left >= clip_right or clip_top >= clip_bottom:
+            continue
+
+        # Re-crop cover_img to visible portion
+        sc = scale if scale > 0.001 else 1.0
+        src_crop_l = max(0, int((clip_left - paste_x) / sc))
+        src_crop_t = max(0, int((clip_top - paste_y) / sc))
+        src_crop_r = min(cover_img.width,
+                         src_crop_l + max(1, int((clip_right - clip_left) / sc)))
+        src_crop_b = min(cover_img.height,
+                         src_crop_t + max(1, int((clip_bottom - clip_top) / sc)))
+
+        if src_crop_l >= src_crop_r or src_crop_t >= src_crop_b:
+            continue
+
+        cropped = cover_img.crop(
+            (src_crop_l, src_crop_t, src_crop_r, src_crop_b))
+        resample = _pick_filter(facility_img)
+        resized = cropped.resize(
+            (clip_right - clip_left, clip_bottom - clip_top), resample)
+        frame.paste(
+            resized, (clip_left, clip_top),
+            resized if resized.mode == "RGBA" else None)
+
+    # Re-draw hole visuals on top of covers so the hole opening stays visible
+    _redraw_hole_visuals(frame, state, fac_images)
+
+
+def _redraw_hole_visuals(
+    frame: Image.Image,
+    state: FrameState,
+    fac_images: dict[str, Image.Image],
+) -> None:
+    """Re-draw hole visual facilities on top of covers.
+
+    Covers sample from the background and paint over everything including
+    the hole visual. Re-drawing the visual facility ensures the hole
+    opening remains visible while characters are correctly occluded.
+    """
+    drawn = set()
+    for hole in state.holes:
+        if not hole.visual_facility or hole.visual_facility in drawn:
+            continue
+        fac_state = state.facilities.get(hole.visual_facility)
+        if fac_state is None:
+            continue
+        sprite = fac_images.get(hole.visual_facility)
+        if sprite is None:
+            continue
+        drawn.add(hole.visual_facility)
+
+        screen_x, screen_y = canvas_to_screen(
+            fac_state.x, fac_state.y, state.camera, CANVAS_W, CANVAS_H)
+        total_scale = state.camera.scale
+        _paste_cropped(frame, sprite, total_scale, screen_x, screen_y, 1.0)
 
 
 def composite_static_frame(scene: Scene,

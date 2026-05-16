@@ -7,20 +7,27 @@
     <facility id="bg_green" src="assets/bg_green.png" layer="background" z="0" />
     <facility id="bg_yellow" src="assets/bg_yellow.png" layer="background" z="5" />
 
-    <!-- Midground facilities: tree on left, ground strip at bottom -->
-    <facility id="tree_left" src="assets/tree_left.png" layer="midground" z="50" />
+    <!-- Midground facilities: ground strip at bottom -->
     <facility id="ground_strip" src="assets/ground_strip.png" layer="midground" z="55" />
+
+    <!-- Hole visual: the dark opening drawn on the ground at the hole position -->
+    <facility id="hole_visual" src="assets/hole.png" layer="midground" z="54" />
+
+    <!-- Tree on props layer: renders AFTER platform so characters can hide behind it -->
+    <facility id="tree_left" src="assets/tree_left.png" layer="props" z="50" />
+
+    <!-- Purple orb: orbits around B, always on top -->
+    <facility id="orb_purple" src="assets/orb_purple.png" layer="top" z="200" />
 
     <!-- Characters on platform layer -->
     <character id="a" name="A" src="assets/char_a.png" layer="platform" z="100" />
     <character id="b" name="B" src="assets/char_b.png" layer="platform" z="110" />
-    <character id="hole" name="Hole" src="assets/hole.png" layer="platform" z="105" />
 
     <!-- B's alternate expression: stretched vertically -->
     <expression character="b" id="b_long" src="assets/char_b_long.png" />
   </assets>
 
-  <scene id="1" duration="25.0">
+  <scene id="1" duration="25.5">
     <initial_camera center_x="960" center_y="540" scale="1.0" />
 
     <initial_facilities>
@@ -28,71 +35,115 @@
       <place facility="bg_green" x="960" y="1500" />
       <place facility="tree_left" x="300" y="800" />
       <place facility="ground_strip" x="960" y="1400" />
+      <place facility="hole_visual" x="1150" y="820" />
+      <place facility="orb_purple" x="1400" y="650" />
     </initial_facilities>
 
+    <holes>
+      <!--
+        Hole at x=1150,y=820 between A and B.
+        sample_facility="bg_green": samples from the same bg_green.png that forms
+        the green ground backdrop. cover_height=500 ensures a typical character
+        (up to ~400px tall) is fully covered at depth_ratio=1.0.
+
+        Coordinate mapping for bg_green at (960, 1500) with 1920×1080 image:
+          image covers canvas y=[420, 1500]
+          hole at canvas y=820 → image y = 820-420 = 400
+          cover at full height (500px): canvas y=[320, 820] → image y=[100, 400]
+          → samples the upper-mid green area of bg_green, which matches the
+            surrounding green backdrop.
+      -->
+      <hole id="hole_portal" x="1150" y="820" width="180" height="60"
+            sample_facility="bg_green" cover_height="500"
+            visual_facility="hole_visual" />
+    </holes>
+
     <initial_characters>
-      <place character="a" x="960" y="800" />
+      <!-- A starts behind the tree (tree on props layer renders on top of platform) -->
+      <place character="a" x="300" y="800" />
     </initial_characters>
 
     <timeline>
-      <!-- 1. Camera pans right to reveal B -->
+      <!-- 1. A walks out from behind the tree (tree layer=props > platform) -->
+      <move character="a" start="0.0" duration="2.5"
+            to_x="960" to_y="800" easing="ease_out" />
+
+      <!-- 2. Camera pans right to reveal B -->
       <camera center_x="1180" center_y="540" scale="1.0"
               start="0.0" duration="3.0" easing="ease_in_out" />
 
-      <!-- 2. B enters via fade_in during the pan -->
+      <!-- 3. B enters via fade_in during the pan -->
       <enter character="b" method="fade_in" start="0.5" duration="1.5"
              target_x="1400" target_y="800" />
 
-      <!-- 3. A jumps in a small arc (upward parabola) -->
-      <move character="a" start="3.5" duration="0.4"
+      <!-- 3.5. Purple orb starts rotating around B (constantly, throughout the scene) -->
+      <rotate facility="orb_purple" to_angle="1080"
+              anchor_character="b" start="0.5" duration="24.5"
+              easing="linear" />
+
+      <!-- 4. A jumps in a small arc (upward parabola) -->
+      <move character="a" start="4.0" duration="0.4"
             path="960,800;960,600;960,800" easing="ease_in_out" />
 
-      <!-- 4. A says "你好！" -->
-      <dialogue character="a" start="4.2" duration="2.0"
+      <!-- 5. A says "你好！" -->
+      <dialogue character="a" start="4.7" duration="2.0"
                 text="你好！" />
 
-      <!-- 5. Camera zooms in on B (after A speaks, before B speaks) -->
-      <camera target="b" scale="1.5" start="6.5" duration="1.0"
+      <!-- 6. Camera zooms in on B (after A speaks, before B speaks) -->
+      <camera target="b" scale="1.5" start="7.0" duration="1.0"
               easing="ease_out" />
 
-      <!-- 6. B says "我是超人" (close-up already settled) -->
-      <dialogue character="b" start="7.8" duration="2.0"
+      <!-- 7. B says "我是超人" (close-up already settled) -->
+      <dialogue character="b" start="8.3" duration="2.0"
                 text="我是超人" />
 
-      <!-- 7. Camera zooms out to wide (after B speaks) -->
+      <!-- 8. Camera zooms out to wide (after B speaks) -->
       <camera center_x="960" center_y="540" scale="0.8"
-              start="10.2" duration="1.5" easing="ease_in_out" />
+              start="10.7" duration="1.5" easing="ease_in_out" />
 
-      <!-- 8. B flies in an arc across the sky (wide shot) -->
-      <move character="b" start="12.0" duration="3.0"
+      <!-- 9. B flies in an arc across the sky (wide shot);
+             orb follows B with the same path at a Y offset -->
+      <move character="b" start="12.5" duration="3.0"
             path="1400,800;1200,300;1400,800" easing="ease_in_out" />
+      <move facility="orb_purple" start="12.5" duration="3.0"
+            path="1400,650;1200,150;1400,650" easing="ease_in_out" />
 
-      <!-- 9. A says "我会遁地" (wide shot, both visible) -->
-      <dialogue character="a" start="13.0" duration="2.0"
+      <!-- 10. A says "我会遁地" (wide shot, both visible) -->
+      <dialogue character="a" start="13.5" duration="2.0"
                 text="我会遁地" />
 
-      <!-- 10. Camera returns to normal -->
+      <!-- 11. Camera returns to normal -->
       <camera center_x="960" center_y="540" scale="1.0"
-              start="16.0" duration="1.0" easing="ease_in_out" />
+              start="16.5" duration="1.0" easing="ease_in_out" />
 
-      <!-- 11. Hole appears between A and B -->
-      <enter character="hole" method="pop_in" start="17.5" duration="0.5"
-             target_x="1150" target_y="820" />
+      <!-- 12. A walks to the hole at (1150, 820) -->
+      <move character="a" start="18.0" duration="1.5"
+            to_x="1150" to_y="820" easing="ease_in_out" />
 
-      <!-- 12. A jumps into hole (downward parabola) -->
-      <move character="a" start="18.5" duration="1.0"
-            path="960,800;1055,700;1150,820" easing="ease_in" />
+      <!-- 13. A sinks into the hole:
+           move drives character y from 820→880 (sinks 60px deeper),
+           enter_hole drives depth_ratio 0→1 (cover grows from 0→500px).
+           The cover samples bg_green pixels and draws them on top of A,
+           progressively hiding A's upper body as they descend. -->
+      <move character="a" start="19.5" duration="1.5"
+            to_x="1150" to_y="880" easing="ease_in" />
+      <enter_hole character="a" hole="hole_portal" start="19.5" duration="1.5" />
 
-      <!-- 13. A sinks into ground and disappears -->
-      <exit character="a" method="slide_down" start="20.0" duration="1.5" />
+      <!-- 14. A fully disappears: fade out remaining visible feet below cover -->
+      <exit character="a" method="fade_out" start="21.0" duration="0.3" />
 
-      <!-- 14. B transforms to long version -->
-      <expression character="b" set="b_long" start="22.0" />
+      <!-- 15. B transforms to long version -->
+      <expression character="b" set="b_long" start="22.5" />
 
-      <!-- 15. B moves right, camera follows -->
-      <move character="b" start="22.5" duration="2.0"
+      <!-- 16. B rotates while walking right; orb follows -->
+      <move character="b" start="23.0" duration="2.0"
             to_x="1700" to_y="800" easing="ease_in_out" />
-      <camera target="b" start="22.5" duration="2.0" easing="ease_in_out" />
+      <move facility="orb_purple" start="23.0" duration="2.0"
+            to_x="1700" to_y="650" easing="ease_in_out" />
+      <rotate character="b" to_angle="360" start="23.0" duration="2.0"
+              easing="ease_in_out" />
+
+      <camera target="b" start="23.0" duration="2.0" easing="ease_in_out" />
     </timeline>
   </scene>
 </comic_script>

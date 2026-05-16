@@ -5,9 +5,9 @@ from rawstage.errors import ParseError
 from rawstage.parser.models import (
     Assets, CharacterAsset, ExpressionAsset, FacilityAsset, AudioAsset,
     Scene, Transition, Script,
-    InitialCamera, Place,
-    EnterEvent, ExitEvent, MoveEvent, CameraEvent, DialogueEvent,
-    ExpressionEvent, AudioEvent, DialogueSpan,
+    InitialCamera, Place, Hole,
+    EnterEvent, ExitEvent, MoveEvent, RotateEvent, CameraEvent, DialogueEvent,
+    ExpressionEvent, AudioEvent, EnterHoleEvent, DialogueSpan,
 )
 
 VALID_ENTER_METHODS = {"fade_in", "slide_left", "slide_right", "slide_up", "slide_down", "pop_in"}
@@ -100,6 +100,7 @@ def _parse_scene(el, assets: Assets) -> Scene:
         el.find("initial_characters"), assets, scene_id, "character")
     initial_facilities = _parse_initial_places(
         el.find("initial_facilities"), assets, scene_id, "facility")
+    holes = _parse_holes(el.find("holes"), assets, scene_id)
     events = _parse_timeline(el.find("timeline"), assets, scene_id)
 
     return Scene(
@@ -108,6 +109,7 @@ def _parse_scene(el, assets: Assets) -> Scene:
         initial_camera=initial_camera,
         initial_characters=initial_characters,
         initial_facilities=initial_facilities,
+        holes=holes,
         events=events,
     )
 
@@ -120,6 +122,39 @@ def _parse_initial_camera(el) -> InitialCamera:
         center_y=float(el.get("center_y", 540)),
         scale=float(el.get("scale", 1.0)),
     )
+
+
+def _parse_holes(el, assets: Assets, scene_id: str) -> list[Hole]:
+    if el is None:
+        return []
+    holes = []
+    for child in el:
+        if child.tag != "hole":
+            continue
+        hole_id = _require(child, "id")
+        sample_fac = _require(child, "sample_facility")
+        if sample_fac not in assets.facilities:
+            raise ParseError(
+                f"Scene {scene_id}: hole '{hole_id}' sample_facility "
+                f"'{sample_fac}' not declared in <assets>")
+        visual_fac = child.get("visual_facility", "")
+        if visual_fac and visual_fac not in assets.facilities:
+            raise ParseError(
+                f"Scene {scene_id}: hole '{hole_id}' visual_facility "
+                f"'{visual_fac}' not declared in <assets>")
+        holes.append(Hole(
+            id=hole_id,
+            x=float(_require(child, "x")),
+            y=float(_require(child, "y")),
+            width=float(_require(child, "width")),
+            height=float(_require(child, "height")),
+            sample_facility=sample_fac,
+            cover_height=float(child.get("cover_height", 60)),
+            depth_start=float(child.get("depth_start", 0)),
+            depth_end=float(child.get("depth_end", 1)),
+            visual_facility=visual_fac,
+        ))
+    return holes
 
 
 def _parse_initial_places(el, assets: Assets, scene_id: str,
@@ -191,7 +226,17 @@ def _parse_timeline(el, assets: Assets, scene_id: str) -> list:
 
         elif tag == "move":
             char = attrs.get("character", "")
-            _check_character(char, assets, scene_id, "move")
+            fac = attrs.get("facility", "")
+            if char and fac:
+                raise ParseError(
+                    f"Scene {scene_id}: <move> cannot have both character and facility")
+            if not char and not fac:
+                raise ParseError(
+                    f"Scene {scene_id}: <move> must have character or facility")
+            if char:
+                _check_character(char, assets, scene_id, "move")
+            if fac:
+                _check_facility(fac, assets, scene_id, "move")
             easing = attrs.get("easing", "linear")
             if easing not in VALID_EASING:
                 raise ParseError(f"Scene {scene_id}: invalid easing '{easing}'")
@@ -199,10 +244,60 @@ def _parse_timeline(el, assets: Assets, scene_id: str) -> list:
             if "path" in attrs:
                 path = _parse_path(attrs["path"], scene_id)
             events.append(MoveEvent(
-                start=start, duration=duration, character=char,
+                start=start, duration=duration, character=char, facility=fac,
                 to_x=float(attrs["to_x"]) if "to_x" in attrs else None,
                 to_y=float(attrs["to_y"]) if "to_y" in attrs else None,
                 path=path, easing=easing,
+            ))
+
+        elif tag == "rotate":
+            char = attrs.get("character", "")
+            fac = attrs.get("facility", "")
+            if char and fac:
+                raise ParseError(
+                    f"Scene {scene_id}: <rotate> cannot have both character and facility")
+            if not char and not fac:
+                raise ParseError(
+                    f"Scene {scene_id}: <rotate> must have character or facility")
+            if char:
+                _check_character(char, assets, scene_id, "rotate")
+            if fac:
+                _check_facility(fac, assets, scene_id, "rotate")
+            to_angle_str = attrs.get("to_angle")
+            if to_angle_str is None:
+                raise ParseError(
+                    f"Scene {scene_id}: <rotate> requires to_angle attribute")
+            to_angle = float(to_angle_str)
+            easing = attrs.get("easing", "linear")
+            if easing not in VALID_EASING:
+                raise ParseError(
+                    f"Scene {scene_id}: invalid rotate easing '{easing}'")
+
+            # Anchor: at most one mode (fixed coords vs entity-bound)
+            anchor_x_str = attrs.get("anchor_x")
+            anchor_y_str = attrs.get("anchor_y")
+            anchor_char = attrs.get("anchor_character", "")
+            anchor_fac = attrs.get("anchor_facility", "")
+
+            has_fixed = anchor_x_str is not None or anchor_y_str is not None
+            has_bound = bool(anchor_char) or bool(anchor_fac)
+            if has_fixed and has_bound:
+                raise ParseError(
+                    f"Scene {scene_id}: <rotate> cannot mix fixed anchor coords "
+                    f"with anchor_character/anchor_facility")
+            if anchor_char:
+                _check_character(anchor_char, assets, scene_id, "rotate anchor")
+            if anchor_fac:
+                _check_facility(anchor_fac, assets, scene_id, "rotate anchor")
+
+            events.append(RotateEvent(
+                start=start, duration=duration,
+                character=char, facility=fac,
+                to_angle=to_angle, easing=easing,
+                anchor_x=float(anchor_x_str) if anchor_x_str is not None else None,
+                anchor_y=float(anchor_y_str) if anchor_y_str is not None else None,
+                anchor_character=anchor_char,
+                anchor_facility=anchor_fac,
             ))
 
         elif tag == "camera":
@@ -265,6 +360,13 @@ def _parse_timeline(el, assets: Assets, scene_id: str) -> list:
             events.append(ExpressionEvent(
                 start=start, duration=duration, character=char, set=expr_id))
 
+        elif tag == "enter_hole":
+            char = attrs.get("character", "")
+            _check_character(char, assets, scene_id, "enter_hole")
+            hole = attrs.get("hole", "")
+            events.append(EnterHoleEvent(
+                start=start, duration=duration, character=char, hole=hole))
+
         elif tag == "audio":
             ref = attrs.get("ref", "")
             if ref not in assets.audios:
@@ -325,6 +427,12 @@ def _check_character(char_id: str, assets: Assets, scene_id: str, context: str) 
     if char_id not in assets.characters:
         raise ParseError(
             f"Scene {scene_id}: {context} references unknown character '{char_id}'")
+
+
+def _check_facility(fac_id: str, assets: Assets, scene_id: str, context: str) -> None:
+    if fac_id not in assets.facilities:
+        raise ParseError(
+            f"Scene {scene_id}: {context} references unknown facility '{fac_id}'")
 
 
 def _require(el, attr: str) -> str:
